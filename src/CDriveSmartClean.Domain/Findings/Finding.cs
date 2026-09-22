@@ -44,6 +44,14 @@ public sealed class Finding
         ArgumentNullException.ThrowIfNull(reclaimEstimate);
         ArgumentNullException.ThrowIfNull(riskAssessment);
 
+        if (reclaimEstimate.MaximumBytes is long maximumBytes &&
+            maximumBytes > sizeMetrics.AllocatedBytes)
+        {
+            throw new ArgumentException(
+                "Maximum reclaim bytes cannot exceed the finding's allocated bytes.",
+                nameof(reclaimEstimate));
+        }
+
         if (!Enum.IsDefined(confidence))
         {
             throw new ArgumentOutOfRangeException(nameof(confidence));

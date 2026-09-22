@@ -11,6 +11,7 @@ public sealed class ReclaimEstimate
         long? maximumBytes,
         string basis,
         IReadOnlyList<string> preconditions,
+        IReadOnlyList<Guid> overlapGroupIds,
         Confidence confidence,
         bool requiresRestart,
         bool requiresCompaction)
@@ -21,6 +22,7 @@ public sealed class ReclaimEstimate
         MaximumBytes = maximumBytes;
         Basis = basis;
         Preconditions = preconditions;
+        OverlapGroupIds = overlapGroupIds;
         Confidence = confidence;
         RequiresRestart = requiresRestart;
         RequiresCompaction = requiresCompaction;
@@ -38,6 +40,8 @@ public sealed class ReclaimEstimate
 
     public IReadOnlyList<string> Preconditions { get; }
 
+    public IReadOnlyList<Guid> OverlapGroupIds { get; }
+
     public Confidence Confidence { get; }
 
     public bool RequiresRestart { get; }
@@ -48,7 +52,8 @@ public sealed class ReclaimEstimate
         long bytes,
         string basis,
         bool requiresRestart = false,
-        bool requiresCompaction = false)
+        bool requiresCompaction = false,
+        IEnumerable<Guid>? overlapGroupIds = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(bytes);
 
@@ -59,6 +64,7 @@ public sealed class ReclaimEstimate
             bytes,
             NormalizeBasis(basis),
             Array.Empty<string>(),
+            NormalizeOverlapGroupIds(overlapGroupIds),
             Confidence.Verified,
             requiresRestart,
             requiresCompaction);
@@ -72,7 +78,8 @@ public sealed class ReclaimEstimate
         string basis,
         IEnumerable<string>? preconditions = null,
         bool requiresRestart = false,
-        bool requiresCompaction = false)
+        bool requiresCompaction = false,
+        IEnumerable<Guid>? overlapGroupIds = null)
     {
         return CreateBounded(
             ReclaimKind.Estimated,
@@ -84,7 +91,8 @@ public sealed class ReclaimEstimate
             preconditions,
             false,
             requiresRestart,
-            requiresCompaction);
+            requiresCompaction,
+            overlapGroupIds);
     }
 
     public static ReclaimEstimate Conditional(
@@ -95,7 +103,8 @@ public sealed class ReclaimEstimate
         string basis,
         IEnumerable<string> preconditions,
         bool requiresRestart = false,
-        bool requiresCompaction = false)
+        bool requiresCompaction = false,
+        IEnumerable<Guid>? overlapGroupIds = null)
     {
         ArgumentNullException.ThrowIfNull(preconditions);
 
@@ -109,7 +118,8 @@ public sealed class ReclaimEstimate
             preconditions,
             true,
             requiresRestart,
-            requiresCompaction);
+            requiresCompaction,
+            overlapGroupIds);
     }
 
     public static ReclaimEstimate UserDecision(
@@ -120,7 +130,8 @@ public sealed class ReclaimEstimate
         string basis,
         IEnumerable<string>? preconditions = null,
         bool requiresRestart = false,
-        bool requiresCompaction = false)
+        bool requiresCompaction = false,
+        IEnumerable<Guid>? overlapGroupIds = null)
     {
         return CreateBounded(
             ReclaimKind.UserDecision,
@@ -132,10 +143,13 @@ public sealed class ReclaimEstimate
             preconditions,
             false,
             requiresRestart,
-            requiresCompaction);
+            requiresCompaction,
+            overlapGroupIds);
     }
 
-    public static ReclaimEstimate Unknown(string basis)
+    public static ReclaimEstimate Unknown(
+        string basis,
+        IEnumerable<Guid>? overlapGroupIds = null)
     {
         return new ReclaimEstimate(
             ReclaimKind.Unknown,
@@ -144,12 +158,15 @@ public sealed class ReclaimEstimate
             null,
             NormalizeBasis(basis),
             Array.Empty<string>(),
+            NormalizeOverlapGroupIds(overlapGroupIds),
             Confidence.Unknown,
             false,
             false);
     }
 
-    public static ReclaimEstimate None(string basis)
+    public static ReclaimEstimate None(
+        string basis,
+        IEnumerable<Guid>? overlapGroupIds = null)
     {
         return new ReclaimEstimate(
             ReclaimKind.None,
@@ -158,6 +175,7 @@ public sealed class ReclaimEstimate
             0,
             NormalizeBasis(basis),
             Array.Empty<string>(),
+            NormalizeOverlapGroupIds(overlapGroupIds),
             Confidence.Verified,
             false,
             false);
@@ -173,7 +191,8 @@ public sealed class ReclaimEstimate
         IEnumerable<string>? preconditions,
         bool requiresPrecondition,
         bool requiresRestart,
-        bool requiresCompaction)
+        bool requiresCompaction,
+        IEnumerable<Guid>? overlapGroupIds)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(minimumBytes);
         ArgumentOutOfRangeException.ThrowIfNegative(expectedBytes);
@@ -205,6 +224,7 @@ public sealed class ReclaimEstimate
             maximumBytes,
             NormalizeBasis(basis),
             normalizedPreconditions,
+            NormalizeOverlapGroupIds(overlapGroupIds),
             confidence,
             requiresRestart,
             requiresCompaction);
@@ -245,5 +265,34 @@ public sealed class ReclaimEstimate
         }
 
         return new ReadOnlyCollection<string>(normalized);
+    }
+
+    private static ReadOnlyCollection<Guid> NormalizeOverlapGroupIds(
+        IEnumerable<Guid>? overlapGroupIds)
+    {
+        if (overlapGroupIds is null)
+        {
+            return Array.AsReadOnly(Array.Empty<Guid>());
+        }
+
+        var normalized = new List<Guid>();
+        var seen = new HashSet<Guid>();
+
+        foreach (Guid overlapGroupId in overlapGroupIds)
+        {
+            if (overlapGroupId == Guid.Empty)
+            {
+                throw new ArgumentException(
+                    "Overlap group identifiers cannot be empty.",
+                    nameof(overlapGroupIds));
+            }
+
+            if (seen.Add(overlapGroupId))
+            {
+                normalized.Add(overlapGroupId);
+            }
+        }
+
+        return new ReadOnlyCollection<Guid>(normalized);
     }
 }
