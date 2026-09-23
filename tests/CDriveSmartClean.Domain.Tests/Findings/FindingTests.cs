@@ -180,6 +180,70 @@ public sealed class FindingTests
         Assert.All(typeof(RiskAssessment).GetProperties(), property => Assert.False(property.CanWrite));
     }
 
+    [Fact]
+    public void ReclaimMaximumBelowAllocatedBytesIsAccepted()
+    {
+        Finding finding = CreateFinding(
+            sizeMetrics: new SizeMetrics(1_000, 300, 300),
+            reclaimEstimate: ReclaimEstimate.Exact(200, "physical allocation"));
+
+        Assert.Equal(200, finding.ReclaimEstimate.MaximumBytes);
+    }
+
+    [Fact]
+    public void ReclaimMaximumEqualToAllocatedBytesIsAccepted()
+    {
+        Finding finding = CreateFinding(
+            sizeMetrics: new SizeMetrics(1_000, 300, 300),
+            reclaimEstimate: ReclaimEstimate.Exact(300, "physical allocation"));
+
+        Assert.Equal(300, finding.ReclaimEstimate.MaximumBytes);
+    }
+
+    [Fact]
+    public void ReclaimMaximumAboveAllocatedBytesIsRejected()
+    {
+        Assert.Throws<ArgumentException>(() => CreateFinding(
+            sizeMetrics: new SizeMetrics(1_000, 300, 300),
+            reclaimEstimate: ReclaimEstimate.Exact(301, "overclaim")));
+    }
+
+    [Fact]
+    public void LogicalSizeCannotBeUsedToOverclaimSparsePhysicalAllocation()
+    {
+        Assert.Throws<ArgumentException>(() => CreateFinding(
+            sizeMetrics: new SizeMetrics(100_000_000_000, 300_000_000, 300_000_000),
+            reclaimEstimate: ReclaimEstimate.Exact(100_000_000_000, "logical size")));
+    }
+
+    [Fact]
+    public void UnknownReclaimIsCompatibleWithAnyAllocation()
+    {
+        Finding finding = CreateFinding(
+            sizeMetrics: new SizeMetrics(100, 0, 0),
+            reclaimEstimate: ReclaimEstimate.Unknown("unknown"));
+
+        Assert.Null(finding.ReclaimEstimate.MaximumBytes);
+    }
+
+    [Fact]
+    public void NoneReclaimIsCompatibleWithAnyAllocation()
+    {
+        Finding finding = CreateFinding(
+            sizeMetrics: new SizeMetrics(100, 0, 0),
+            reclaimEstimate: ReclaimEstimate.None("none"));
+
+        Assert.Equal(0, finding.ReclaimEstimate.MaximumBytes);
+    }
+
+    [Fact]
+    public void ZeroAllocationRejectsNonzeroReclaimMaximum()
+    {
+        Assert.Throws<ArgumentException>(() => CreateFinding(
+            sizeMetrics: new SizeMetrics(100, 0, 0),
+            reclaimEstimate: ReclaimEstimate.Exact(1, "overclaim")));
+    }
+
     private static Finding CreateFinding(
         Guid? id = null,
         Guid? scanSessionId = null,

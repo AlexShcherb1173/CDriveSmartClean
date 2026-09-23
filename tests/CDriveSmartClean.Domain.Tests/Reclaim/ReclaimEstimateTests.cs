@@ -161,4 +161,82 @@ public sealed class ReclaimEstimateTests
     {
         Assert.Equal(ReclaimKind.Unknown, default);
     }
+
+    [Fact]
+    public void DefaultOverlapGroupsAreEmpty()
+    {
+        Assert.Empty(ReclaimEstimate.Exact(1, "basis").OverlapGroupIds);
+    }
+
+    [Fact]
+    public void OverlapGroupsAreDeduplicatedInStableOrderAndDefensivelyCopied()
+    {
+        Guid first = Guid.NewGuid();
+        Guid second = Guid.NewGuid();
+        var source = new List<Guid> { first, second, first };
+        ReclaimEstimate estimate = ReclaimEstimate.Exact(
+            1,
+            "basis",
+            overlapGroupIds: source);
+
+        source.Add(Guid.NewGuid());
+
+        Assert.Equal([first, second], estimate.OverlapGroupIds);
+    }
+
+    [Fact]
+    public void EmptyOverlapGroupIdIsRejected()
+    {
+        Assert.Throws<ArgumentException>(
+            () => ReclaimEstimate.Exact(1, "basis", overlapGroupIds: [Guid.Empty]));
+    }
+
+    [Fact]
+    public void BoundedFactoriesRetainOverlapGroups()
+    {
+        Guid estimatedId = Guid.NewGuid();
+        Guid conditionalId = Guid.NewGuid();
+        Guid userDecisionId = Guid.NewGuid();
+
+        ReclaimEstimate estimated = ReclaimEstimate.Estimated(
+            1,
+            2,
+            3,
+            Confidence.High,
+            "basis",
+            overlapGroupIds: [estimatedId]);
+        ReclaimEstimate conditional = ReclaimEstimate.Conditional(
+            1,
+            2,
+            3,
+            Confidence.High,
+            "basis",
+            ["condition"],
+            overlapGroupIds: [conditionalId]);
+        ReclaimEstimate userDecision = ReclaimEstimate.UserDecision(
+            1,
+            2,
+            3,
+            Confidence.High,
+            "basis",
+            overlapGroupIds: [userDecisionId]);
+
+        Assert.Equal([estimatedId], estimated.OverlapGroupIds);
+        Assert.Equal([conditionalId], conditional.OverlapGroupIds);
+        Assert.Equal([userDecisionId], userDecision.OverlapGroupIds);
+    }
+
+    [Fact]
+    public void UnknownAndNoneRetainOverlapGroupsWithoutInventingBytes()
+    {
+        Guid unknownId = Guid.NewGuid();
+        Guid noneId = Guid.NewGuid();
+        ReclaimEstimate unknown = ReclaimEstimate.Unknown("basis", [unknownId]);
+        ReclaimEstimate none = ReclaimEstimate.None("basis", [noneId]);
+
+        Assert.Equal([unknownId], unknown.OverlapGroupIds);
+        Assert.Null(unknown.MaximumBytes);
+        Assert.Equal([noneId], none.OverlapGroupIds);
+        Assert.Equal(0, none.MaximumBytes);
+    }
 }
