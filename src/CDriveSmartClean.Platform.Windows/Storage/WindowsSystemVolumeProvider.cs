@@ -13,7 +13,7 @@ public sealed class WindowsSystemVolumeProvider : ISystemVolumeProvider
     public SystemVolumeDescriptor GetSystemVolume()
     {
         var windowsBuffer = new char[260];
-        uint length = Kernel32VolumeNative.GetWindowsDirectoryW(windowsBuffer, (uint)windowsBuffer.Length);
+        uint length = Kernel32VolumeNative.GetSystemWindowsDirectoryW(windowsBuffer, (uint)windowsBuffer.Length);
         if (length == 0)
         {
             throw new Win32Exception(Marshal.GetLastPInvokeError());
@@ -22,7 +22,7 @@ public sealed class WindowsSystemVolumeProvider : ISystemVolumeProvider
         if (length >= windowsBuffer.Length)
         {
             windowsBuffer = new char[checked((int)length + 1)];
-            length = Kernel32VolumeNative.GetWindowsDirectoryW(windowsBuffer, (uint)windowsBuffer.Length);
+            length = Kernel32VolumeNative.GetSystemWindowsDirectoryW(windowsBuffer, (uint)windowsBuffer.Length);
             if (length == 0)
             {
                 throw new Win32Exception(Marshal.GetLastPInvokeError());

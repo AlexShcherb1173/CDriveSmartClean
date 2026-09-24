@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.InteropServices;
 using CDriveSmartClean.Platform.Windows.Storage;
 using Xunit;
 
@@ -5,6 +7,41 @@ namespace CDriveSmartClean.Windows.IntegrationTests.Storage;
 
 public sealed class WindowsSystemVolumeProviderTests
 {
+    [Fact]
+    public void NativeInteropUsesSharedSystemWindowsDirectoryEntryPoint()
+    {
+        Type? interopType = typeof(WindowsSystemVolumeProvider).Assembly.GetType(
+            "CDriveSmartClean.Platform.Windows.Interop.Kernel32VolumeNative");
+        Assert.NotNull(interopType);
+        Assert.False(interopType.IsVisible);
+
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic |
+            BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        MethodInfo[] nativeMethods = interopType.GetMethods(flags)
+            .Where(method => (method.Attributes & MethodAttributes.PinvokeImpl) != 0)
+            .ToArray();
+        Assert.Equal(
+            ["GetSystemWindowsDirectoryW", "GetVolumeNameForVolumeMountPointW", "GetVolumePathNameW"],
+            nativeMethods.Select(method => method.Name).Order(StringComparer.Ordinal));
+        Assert.Null(interopType.GetMethod("GetWindowsDirectoryW", flags));
+
+        MethodInfo? sharedMethod = interopType.GetMethod("GetSystemWindowsDirectoryW", flags);
+        Assert.NotNull(sharedMethod);
+        Assert.True(sharedMethod.IsStatic);
+        Assert.Equal(typeof(uint), sharedMethod.ReturnType);
+        Assert.Equal(
+            [typeof(char[]), typeof(uint)],
+            sharedMethod.GetParameters().Select(parameter => parameter.ParameterType));
+        Assert.True((sharedMethod.Attributes & MethodAttributes.PinvokeImpl) != 0);
+
+        DllImportAttribute? import = sharedMethod.GetCustomAttribute<DllImportAttribute>();
+        Assert.NotNull(import);
+        Assert.Equal("kernel32.dll", import.Value);
+        Assert.Equal(CharSet.Unicode, import.CharSet);
+        Assert.True(import.ExactSpelling);
+        Assert.True(import.SetLastError);
+    }
+
     [Fact]
     public void ActualSystemVolumeHasValidIdentityAndFullyQualifiedRoot()
     {
