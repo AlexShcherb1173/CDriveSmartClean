@@ -1,5 +1,6 @@
 using System.Reflection;
 using CDriveSmartClean.Application.Scanning.Enumeration;
+using CDriveSmartClean.Application.Scanning.Identity;
 using CDriveSmartClean.Application.Scanning.Observations;
 using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
@@ -52,6 +53,7 @@ public sealed class StorageTreeWalkerTests
     [InlineData(2, StorageTraversalIssueKind.Disappeared)]
     [InlineData(3, StorageTraversalIssueKind.TargetChanged)]
     [InlineData(4, StorageTraversalIssueKind.IoFailure)]
+    [InlineData(5, StorageTraversalIssueKind.IdentityUnavailable)]
     public async Task ChildFailuresReportExactlyOneIssueAndContinuePendingSiblings(int failure, StorageTraversalIssueKind kind)
     {
         var h = new Harness();
@@ -70,6 +72,7 @@ public sealed class StorageTreeWalkerTests
     [Theory]
     [InlineData(0)]
     [InlineData(4)]
+    [InlineData(5)]
     public async Task RootFailureIsFatalAndNotDowngraded(int failure)
     {
         var h = new Harness();
@@ -195,7 +198,7 @@ public sealed class StorageTreeWalkerTests
     public async Task CrossVolumeOutputFailsClosedBeforeForwardingOrScheduling(bool child)
     {
         var h = new Harness();
-        var foreign = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), "foreign", StorageObjectKind.Directory, ReparseKind.None);
+        var foreign = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), null, "foreign", StorageObjectKind.Directory, ReparseKind.None);
         h.Enumerator.Root = child ? [h.Entry("parent", StorageObjectKind.Directory)] : [foreign];
         h.Enumerator.Children["parent"] = [foreign];
         await Assert.ThrowsAsync<InvalidOperationException>(() => h.Walk(TestContext.Current.CancellationToken));
@@ -345,12 +348,150 @@ public sealed class StorageTreeWalkerTests
             method.GetParameters().Select(p => p.ParameterType));
     }
 
+    [Fact]
+    public async Task IdentitylessDirectoryIsVisibleReportedAndNotTraversed()
+    {
+        var h = new Harness();
+        var entry = new StorageEntry(h.Volume.VolumeIdentity, null, "unknown", StorageObjectKind.Directory, ReparseKind.None);
+        h.Enumerator.Root = [entry];
+        await h.Walk(TestContext.Current.CancellationToken);
+        Assert.Same(entry, Assert.Single(h.Entries.Values));
+        var issue = Assert.Single(h.Issues.Values);
+        Assert.Equal(StorageTraversalIssueKind.IdentityUnavailable, issue.Kind);
+        Assert.Equal(entry.CanonicalPath, issue.CanonicalPath);
+        Assert.Same(entry.VolumeIdentity, issue.VolumeIdentity);
+        Assert.Empty(h.Enumerator.ChildCalls);
+    }
+
+    [Fact]
+    public async Task IdentitylessFileRemainsVisibleWithoutTraversalIssue()
+    {
+        var h = new Harness();
+        var entry = new StorageEntry(h.Volume.VolumeIdentity, null, "file", StorageObjectKind.File, ReparseKind.None);
+        h.Enumerator.Root = [entry];
+        await h.Walk(TestContext.Current.CancellationToken);
+        Assert.Same(entry, Assert.Single(h.Entries.Values));
+        Assert.Empty(h.Issues.Values);
+        Assert.Empty(h.Enumerator.ChildCalls);
+    }
+
+    [Theory]
+    [InlineData(ReparseKind.SymbolicLink)]
+    [InlineData(ReparseKind.Junction)]
+    [InlineData(ReparseKind.MountPoint)]
+    [InlineData(ReparseKind.Other)]
+    public async Task IdentitylessReparseRemainsObserveOnly(ReparseKind reparse)
+    {
+        var h = new Harness();
+        var entry = new StorageEntry(h.Volume.VolumeIdentity, null, "reparse", StorageObjectKind.Directory, reparse);
+        h.Enumerator.Root = [entry];
+        await h.Walk(TestContext.Current.CancellationToken);
+        Assert.Same(entry, Assert.Single(h.Entries.Values));
+        Assert.Empty(h.Issues.Values);
+        Assert.Empty(h.Enumerator.ChildCalls);
+    }
+
+    [Fact]
+    public async Task SameDirectoryIdentityIsScheduledOnlyOnce()
+    {
+        var h = new Harness();
+        var first = h.Entry("first", StorageObjectKind.Directory);
+        var second = new StorageEntry(first.VolumeIdentity,
+            new StorageObjectIdentity(first.VolumeIdentity, first.ObjectIdentity!.ObjectId), "second", StorageObjectKind.Directory, ReparseKind.None);
+        h.Enumerator.Root = [first, second];
+        await h.Walk(TestContext.Current.CancellationToken);
+        Assert.Equal([first, second], h.Entries.Values);
+        Assert.Equal(["first"], h.Enumerator.ChildCalls);
+        Assert.Empty(h.Issues.Values);
+    }
+
+    [Fact]
+    public async Task HardLinkFilePathsBothRemainVisible()
+    {
+        var h = new Harness();
+        var first = h.Entry("first");
+        var second = new StorageEntry(first.VolumeIdentity, first.ObjectIdentity, "second", StorageObjectKind.File, ReparseKind.None);
+        h.Enumerator.Root = [first, second];
+        await h.Walk(TestContext.Current.CancellationToken);
+        Assert.Equal([first, second], h.Entries.Values);
+        Assert.Empty(h.Issues.Values);
+    }
+
+    [Fact]
+    public Task IdentityUnavailableChildExceptionReportsIssueAndContinuesSibling() =>
+        ChildFailuresReportExactlyOneIssueAndContinuePendingSiblings(5, StorageTraversalIssueKind.IdentityUnavailable);
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public async Task IssueSinkFailureDuringIdentityUnavailableRoutingPreservesOrigin(bool unauthorized, bool asynchronous, bool atRoot)
+    {
+        var h = new Harness();
+        var unknown = new StorageEntry(h.Volume.VolumeIdentity, null, "unknown", StorageObjectKind.Directory, ReparseKind.None);
+        h.Enumerator.Root = atRoot ? [unknown, h.Entry("later")] : [h.Entry("parent", StorageObjectKind.Directory)];
+        h.Enumerator.Children["parent"] = [unknown, h.Entry("later")];
+        Exception expected = unauthorized ? new UnauthorizedAccessException("issue sink") : new IOException("issue sink");
+        h.Issues.Callback = (_, _) =>
+        {
+            if (!asynchronous)
+            {
+                throw expected;
+            }
+
+            return ValueTask.FromException(expected);
+        };
+        Assert.Same(expected, await Record.ExceptionAsync(() => h.Walk(TestContext.Current.CancellationToken)));
+        Assert.Equal(StorageTraversalIssueKind.IdentityUnavailable, Assert.Single(h.Issues.Values).Kind);
+        Assert.DoesNotContain(h.Entries.Values, e => e.CanonicalPath == "later");
+    }
+
+    [Fact]
+    public async Task IdentityUnavailableRoutingHonorsIssueBackpressureAndCancellation()
+    {
+        var h = new Harness();
+        var unknown = new StorageEntry(h.Volume.VolumeIdentity, null, "unknown", StorageObjectKind.Directory, ReparseKind.None);
+        h.Enumerator.Root = [unknown, h.Entry("later")];
+        var entered = Signal();
+        var release = Signal();
+        using var cancellation = new CancellationTokenSource();
+        h.Issues.Callback = (_, token) =>
+        {
+            Assert.Equal(cancellation.Token, token);
+            entered.SetResult();
+            return new ValueTask(release.Task);
+        };
+        Task walk = h.Walk(cancellation.Token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            Assert.False(walk.IsCompleted);
+            Assert.Single(h.Entries.Values);
+            cancellation.Cancel();
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => walk);
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.Single(h.Issues.Values);
+        Assert.Empty(h.Enumerator.ChildCalls);
+    }
+
     private static Exception Failure(int value) => value switch
     {
         0 => new UnauthorizedAccessException("enumerator"),
         1 => new DirectoryNotFoundException("enumerator"),
         2 => new FileNotFoundException("enumerator"),
         3 => new StorageTraversalTargetChangedException("bad"),
+        5 => new StorageObjectIdentityUnavailableException("bad"),
         _ => new IOException("enumerator"),
     };
 
@@ -367,7 +508,7 @@ public sealed class StorageTreeWalkerTests
         public Harness() => Walker = new StorageTreeWalker(Enumerator, new StorageTraversalPolicy());
 
         public StorageEntry Entry(string path, StorageObjectKind kind = StorageObjectKind.File, ReparseKind reparse = ReparseKind.None) =>
-            new(Volume.VolumeIdentity, path, kind, reparse);
+            new(Volume.VolumeIdentity, new StorageObjectIdentity(Volume.VolumeIdentity, Guid.NewGuid()), path, kind, reparse);
 
         public Task Walk(CancellationToken cancellationToken = default) => Walker.WalkAsync(Volume, Entries, Issues, cancellationToken);
     }

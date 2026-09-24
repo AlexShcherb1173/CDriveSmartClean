@@ -37,6 +37,8 @@ public sealed class StorageTreeWalkerIntegrationTests
             Assert.All(entries.Entries, entry =>
             {
                 Assert.Same(volume.VolumeIdentity, entry.VolumeIdentity);
+                Assert.NotNull(entry.ObjectIdentity);
+                Assert.Equal(volume.VolumeIdentity, entry.ObjectIdentity.VolumeIdentity);
                 Assert.True(Path.IsPathFullyQualified(entry.CanonicalPath));
             });
             Assert.Empty(issues.Issues);

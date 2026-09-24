@@ -6,4 +6,5 @@ public enum StorageTraversalIssueKind
     Disappeared = 2,
     TargetChanged = 3,
     IoFailure = 4,
+    IdentityUnavailable = 5,
 }
