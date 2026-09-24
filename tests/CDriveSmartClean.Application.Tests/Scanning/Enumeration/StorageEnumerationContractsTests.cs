@@ -89,7 +89,19 @@ public sealed class StorageEnumerationContractsTests
     public void StorageEnumeratorIsInterface() => Assert.True(typeof(IStorageEnumerator).IsInterface);
 
     [Fact]
-    public void StorageEnumeratorHasExactlyOneMethod() => Assert.Equal("EnumerateRootAsync", EnumeratorMethod().Name);
+    public void StorageEnumeratorHasExactlyTwoMethods() =>
+        Assert.Equal(["EnumerateChildrenAsync", "EnumerateRootAsync"], typeof(IStorageEnumerator).GetMethods().Select(m => m.Name).Order(StringComparer.Ordinal));
+
+    [Fact]
+    public void EnumerateChildrenAsyncHasExactContract()
+    {
+        var method = typeof(IStorageEnumerator).GetMethod("EnumerateChildrenAsync")!;
+        Assert.Equal(typeof(Task), method.ReturnType);
+        Assert.True(method.IsAbstract);
+        Assert.Equal([typeof(SystemVolumeDescriptor), typeof(StorageEntry), typeof(IStorageEntrySink), typeof(CancellationToken)],
+            method.GetParameters().Select(p => p.ParameterType));
+        Assert.All(method.GetParameters(), p => Assert.False(p.IsOptional));
+    }
 
     [Fact]
     public void EnumerateRootAsyncReturnsTask() => Assert.Equal(typeof(Task), EnumeratorMethod().ReturnType);
@@ -130,7 +142,7 @@ public sealed class StorageEnumerationContractsTests
         Assert.Equal(
             [typeof(string), typeof(bool), typeof(StorageObjectKind), typeof(ReparseKind), typeof(VolumeIdentity)],
             typeof(StorageEntry).GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal).Select(p => p.PropertyType));
-        Assert.Equal(15, typeof(StorageEntry).Assembly.GetExportedTypes().Length);
+        Assert.Equal(19, typeof(StorageEntry).Assembly.GetExportedTypes().Length);
         Assert.Equal(14, typeof(VolumeIdentity).Assembly.GetExportedTypes().Length);
     }
 
@@ -138,7 +150,7 @@ public sealed class StorageEnumerationContractsTests
 
     private static StorageEntry Entry(string path) => new(Identity(), path, StorageObjectKind.File, ReparseKind.None);
 
-    private static MethodInfo EnumeratorMethod() => Assert.Single(typeof(IStorageEnumerator).GetMethods());
+    private static MethodInfo EnumeratorMethod() => typeof(IStorageEnumerator).GetMethod("EnumerateRootAsync")!;
 
     private static MethodInfo SinkMethod() => Assert.Single(typeof(IStorageEntrySink).GetMethods());
 }

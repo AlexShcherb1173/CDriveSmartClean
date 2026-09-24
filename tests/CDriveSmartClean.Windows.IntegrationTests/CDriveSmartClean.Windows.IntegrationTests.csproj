@@ -14,5 +14,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\CDriveSmartClean.Platform.Windows\CDriveSmartClean.Platform.Windows.csproj" />
+    <ProjectReference Include="..\..\src\CDriveSmartClean.Scan\CDriveSmartClean.Scan.csproj" />
   </ItemGroup>
 </Project>
