@@ -519,7 +519,7 @@ public sealed class WindowsStorageEnumeratorTests
         Assert.False(locked.IsInvalid);
         var candidate = Assert.Single(await Observe(fixture), e => e.CanonicalPath == fixture.Child);
         Assert.NotNull(candidate.ObjectIdentity);
-        await Assert.ThrowsAsync<IOException>(() => new WindowsStorageEnumerator().EnumerateChildrenAsync(
+        await Assert.ThrowsAsync<StorageObjectIdentityUnavailableException>(() => new WindowsStorageEnumerator().EnumerateChildrenAsync(
             fixture.Volume, candidate, new CollectingSink(), TestContext.Current.CancellationToken));
     }
 
@@ -597,16 +597,88 @@ public sealed class WindowsStorageEnumeratorTests
     [InlineData(1, typeof(StorageObjectIdentityUnavailableException))]
     [InlineData(50, typeof(StorageObjectIdentityUnavailableException))]
     [InlineData(87, typeof(StorageObjectIdentityUnavailableException))]
-    [InlineData(32, typeof(IOException))]
+    [InlineData(32, typeof(StorageObjectIdentityUnavailableException))]
+    [InlineData(31, typeof(IOException))]
     public void NativeErrorsMappedWithoutLosingIoEvidence(int code, Type expected)
     {
         var method = IdentityReader.GetMethod("NativeFailure", BindingFlags.NonPublic | BindingFlags.Static)!;
         var error = Assert.IsAssignableFrom<Exception>(method.Invoke(null, [code, "path"]));
         Assert.Equal(expected, error.GetType());
-        if (code == 32)
+        if (code == 31)
         {
             Assert.Equal(code, Assert.IsType<System.ComponentModel.Win32Exception>(error.InnerException).NativeErrorCode);
         }
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    [InlineData(2, true)]
+    [InlineData(3, true)]
+    [InlineData(4, false)]
+    [InlineData(5, false)]
+    public void BestEffortExceptionClassificationIsExplicit(int kind, bool expected)
+    {
+        Exception exception = kind switch
+        {
+            0 => new UnauthorizedAccessException("test"),
+            1 => new FileNotFoundException("test"),
+            2 => new DirectoryNotFoundException("test"),
+            3 => new StorageObjectIdentityUnavailableException("path"),
+            4 => new IOException("unclassified"),
+            _ => new InvalidOperationException("programming defect"),
+        };
+        Assert.Equal(expected, IsExpectedIdentityFailure(exception));
+    }
+
+    [Fact]
+    public void SharingViolationMappingIsExplicitlySuppressible()
+    {
+        // Deterministic native-error mapping, not a claim that an actual open returned error 32.
+        var mapper = IdentityReader.GetMethod("NativeFailure", BindingFlags.NonPublic | BindingFlags.Static)!;
+        Assert.True(mapper.IsPrivate);
+        var exception = Assert.IsType<StorageObjectIdentityUnavailableException>(mapper.Invoke(null, [32, "exact path"]));
+        Assert.Equal("exact path", exception.CanonicalPath);
+        Assert.True(IsExpectedIdentityFailure(exception));
+    }
+
+    [Fact]
+    public void UnclassifiedNativeErrorIsNotSuppressibleAndPreservesEvidence()
+    {
+        var mapper = IdentityReader.GetMethod("NativeFailure", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var exception = Assert.IsType<IOException>(mapper.Invoke(null, [31, "path"]));
+        Assert.Equal(31, Assert.IsType<System.ComponentModel.Win32Exception>(exception.InnerException).NativeErrorCode);
+        Assert.False(IsExpectedIdentityFailure(exception));
+    }
+
+    [Theory]
+    [InlineData(0x80000000u)]
+    [InlineData(0x40000000u)]
+    [InlineData(0x00010000u)]
+    public async Task ZeroAccessShareAllObservationSucceedsUnderExclusiveHolder(uint holderAccess)
+    {
+        using var fixture = new RootFixture();
+        var original = Assert.Single(await Observe(fixture), entry => entry.CanonicalPath == fixture.Ordinary);
+        Assert.NotNull(original.ObjectIdentity);
+        using var held = TestCreateFile(fixture.Ordinary, holderAccess, 0, 0, 3, 0x02200000, 0);
+        int error = Marshal.GetLastPInvokeError();
+        Assert.False(held.IsInvalid, $"Exclusive test holder failed: {error}");
+
+        var entries = await Observe(fixture);
+        var observed = Assert.Single(entries, entry => entry.CanonicalPath == fixture.Ordinary);
+        Assert.NotNull(observed.ObjectIdentity);
+        Assert.Equal(original.ObjectIdentity, observed.ObjectIdentity);
+        Assert.Equal(3, entries.Count);
+        Assert.Contains(entries, entry => entry.CanonicalPath == fixture.Hidden);
+        Assert.Contains(entries, entry => entry.CanonicalPath == fixture.Child);
+        Assert.False(held.IsClosed);
+    }
+
+    private static bool IsExpectedIdentityFailure(Exception exception)
+    {
+        var classifier = IdentityReader.GetMethod("IsExpectedIdentityFailure", BindingFlags.NonPublic | BindingFlags.Static)!;
+        Assert.True(classifier.IsPrivate);
+        return Assert.IsType<bool>(classifier.Invoke(null, [exception]));
     }
 
     private static async Task<List<StorageEntry>> Observe(RootFixture fixture)

@@ -10,6 +10,8 @@ namespace CDriveSmartClean.Platform.Windows.Storage;
 
 internal static class WindowsStorageObjectIdentityReader
 {
+    private const int ErrorSharingViolation = 32;
+
     internal static StorageObjectIdentity? TryRead(VolumeIdentity volume, string path)
     {
         try
@@ -17,15 +19,15 @@ internal static class WindowsStorageObjectIdentityReader
             using var handle = Open(path, 0, Kernel32FileIdentityNative.ObservationShare);
             return ReadIdentity(handle, volume, path);
         }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
+        catch (Exception exception) when (IsExpectedIdentityFailure(exception))
         {
             return null;
         }
     }
+
+    private static bool IsExpectedIdentityFailure(Exception exception) =>
+        exception is UnauthorizedAccessException or FileNotFoundException or DirectoryNotFoundException
+            or StorageObjectIdentityUnavailableException;
 
     internal static SafeFileHandle OpenPinnedDirectory(StorageObjectIdentity expected, string path)
     {
@@ -100,7 +102,7 @@ internal static class WindowsStorageObjectIdentityReader
         2 => new FileNotFoundException("Native identity target was not found.", path),
         3 => new DirectoryNotFoundException("Native identity parent path was not found: " + path),
         5 => new UnauthorizedAccessException("Native identity access was denied: " + path),
-        1 or 50 or 87 => new StorageObjectIdentityUnavailableException(path),
+        1 or 50 or 87 or ErrorSharingViolation => new StorageObjectIdentityUnavailableException(path),
         _ => new IOException("Native identity query failed: " + path, new Win32Exception(error)),
     };
 }
