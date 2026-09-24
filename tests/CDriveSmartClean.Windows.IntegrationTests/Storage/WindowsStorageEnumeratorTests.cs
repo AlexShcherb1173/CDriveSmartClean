@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.Versioning;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Observations;
+using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
 using CDriveSmartClean.Domain.Storage;
 using CDriveSmartClean.Platform.Windows.Storage;
@@ -208,18 +209,161 @@ public sealed class WindowsStorageEnumeratorTests
     }
 
     [Fact]
-    public void WindowsEnumeratorHasOnlyTheRequiredPublicOperation()
+    public void WindowsEnumeratorHasOnlyTheRequiredPublicOperations()
     {
         Type type = typeof(WindowsStorageEnumerator);
         Assert.True(type.IsSealed);
         Assert.Contains(typeof(IStorageEnumerator), type.GetInterfaces());
         Assert.Equal("windows", type.GetCustomAttribute<SupportedOSPlatformAttribute>()!.PlatformName);
-        var method = Assert.Single(type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly));
+        var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+        Assert.Equal(["EnumerateChildrenAsync", "EnumerateRootAsync"], methods.Select(m => m.Name).Order(StringComparer.Ordinal));
+        var method = Assert.Single(methods, m => m.Name == "EnumerateRootAsync");
         Assert.Equal("EnumerateRootAsync", method.Name);
         Assert.Equal(typeof(Task), method.ReturnType);
         Assert.Equal([typeof(SystemVolumeDescriptor), typeof(IStorageEntrySink), typeof(CancellationToken)], method.GetParameters().Select(p => p.ParameterType));
         Assert.Equal(2, type.Assembly.GetExportedTypes().Length);
     }
+
+    [Fact]
+    public async Task ChildEnumerationIsSingleLevelAndPropagatesVolumeIdentity()
+    {
+        using var fixture = new RootFixture();
+        var sink = new CollectingSink();
+        await new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, Candidate(fixture), sink, CancellationToken.None);
+        var entry = Assert.Single(sink.Entries);
+        Assert.Equal(fixture.Grandchild, entry.CanonicalPath);
+        Assert.Same(fixture.Volume.VolumeIdentity, entry.VolumeIdentity);
+        Assert.Equal(StorageObjectKind.File, entry.ObjectKind);
+        AssertDirectChild(fixture.Child, entry.CanonicalPath);
+    }
+
+    [Fact]
+    public async Task TargetChangedFromDirectoryToFileIsRejected()
+    {
+        using var fixture = new RootFixture();
+        string path = Path.Combine(fixture.Root, "candidate");
+        Directory.CreateDirectory(path);
+        var candidate = Candidate(fixture, path);
+        Directory.Delete(path);
+        File.WriteAllText(path, "replacement");
+        try
+        {
+            var sink = new CollectingSink();
+            var error = await Assert.ThrowsAsync<StorageTraversalTargetChangedException>(() =>
+                new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, candidate, sink, CancellationToken.None));
+            Assert.Equal(path, error.CanonicalPath);
+            Assert.Empty(sink.Entries);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task DisappearedChildDirectoryFailsInsteadOfSucceeding()
+    {
+        using var fixture = new RootFixture();
+        string path = Path.Combine(fixture.Root, "candidate");
+        Directory.CreateDirectory(path);
+        var candidate = Candidate(fixture, path);
+        Directory.Delete(path);
+        var sink = new CollectingSink();
+        var error = await Record.ExceptionAsync(() =>
+            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, candidate, sink, CancellationToken.None));
+        Assert.True(error is DirectoryNotFoundException or FileNotFoundException);
+        Assert.Empty(sink.Entries);
+    }
+
+    [Fact]
+    public async Task ChildFromAnotherVolumeIsRejectedBeforeFilesystemAccess()
+    {
+        using var fixture = new RootFixture();
+        var entry = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), Path.Combine(fixture.Root, "missing"), StorageObjectKind.Directory, ReparseKind.None);
+        await Assert.ThrowsAsync<ArgumentException>("directory", () =>
+            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(ReparseKind.SymbolicLink)]
+    [InlineData(ReparseKind.Junction)]
+    [InlineData(ReparseKind.MountPoint)]
+    [InlineData(ReparseKind.Other)]
+    public async Task KnownReparseInputRejected(ReparseKind reparse)
+    {
+        using var fixture = new RootFixture();
+        var entry = new StorageEntry(fixture.Volume.VolumeIdentity, fixture.Child, StorageObjectKind.Directory, reparse);
+        await Assert.ThrowsAsync<ArgumentException>("directory", () =>
+            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(StorageObjectKind.File)]
+    [InlineData(StorageObjectKind.Other)]
+    public async Task NonDirectoryChildRejected(StorageObjectKind kind)
+    {
+        using var fixture = new RootFixture();
+        var entry = new StorageEntry(fixture.Volume.VolumeIdentity, fixture.Child, kind, ReparseKind.None);
+        await Assert.ThrowsAsync<ArgumentException>("directory", () =>
+            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("root")]
+    [InlineData("parent")]
+    [InlineData("prefix-sibling")]
+    [InlineData("escape")]
+    public async Task ChildOutsideRootOrRootItselfRejected(string scenario)
+    {
+        using var fixture = new RootFixture();
+        string path = scenario switch
+        {
+            "root" => fixture.Root,
+            "parent" => Path.GetDirectoryName(fixture.Root)!,
+            "prefix-sibling" => fixture.Root + "-sibling",
+            _ => Path.Combine(fixture.Root, "..", "outside"),
+        };
+        await Assert.ThrowsAsync<ArgumentException>("directory", () =>
+            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, Candidate(fixture, path), new CollectingSink(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DoubleDotNameIsNotMistakenForParentSegment()
+    {
+        using var fixture = new RootFixture();
+        string path = Path.Combine(fixture.Root, "..ordinary");
+        Directory.CreateDirectory(path);
+        try
+        {
+            var sink = new CollectingSink();
+            await new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, Candidate(fixture, path), sink, CancellationToken.None);
+            Assert.Empty(sink.Entries);
+        }
+        finally
+        {
+            Directory.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ChildBoundaryRejectsNullArgumentsAndPreCancellation()
+    {
+        using var fixture = new RootFixture();
+        var enumerator = new WindowsStorageEnumerator();
+        var sink = new CollectingSink();
+        await Assert.ThrowsAsync<ArgumentNullException>("systemVolume", () => enumerator.EnumerateChildrenAsync(null!, Candidate(fixture), sink, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>("directory", () => enumerator.EnumerateChildrenAsync(fixture.Volume, null!, sink, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>("entrySink", () => enumerator.EnumerateChildrenAsync(fixture.Volume, Candidate(fixture), null!, CancellationToken.None));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            enumerator.EnumerateChildrenAsync(fixture.Volume, Candidate(fixture, Path.Combine(fixture.Root, "missing")), sink, cancellation.Token));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.Empty(sink.Entries);
+    }
+
+    private static StorageEntry Candidate(RootFixture fixture, string? path = null) =>
+        new(fixture.Volume.VolumeIdentity, path ?? fixture.Child, StorageObjectKind.Directory, ReparseKind.None);
 
     private static void AssertDirectChild(string root, string path)
     {

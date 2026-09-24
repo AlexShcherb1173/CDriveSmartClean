@@ -1,3 +1,4 @@
+using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Observations;
 using CDriveSmartClean.Domain.Storage;
 using CDriveSmartClean.Scan.Traversal;
@@ -12,7 +13,7 @@ public sealed class StorageTraversalPolicyTests
     [Fact]
     public void NullObservationRejected()
     {
-        Assert.Throws<ArgumentNullException>("observation", () => policy.Evaluate(null!));
+        Assert.Throws<ArgumentNullException>("observation", () => policy.Evaluate((StorageObservation)null!));
     }
 
     [Fact]
@@ -161,6 +162,38 @@ public sealed class StorageTraversalPolicyTests
         Assert.Equal(TraversalDecision.TraverseChildren, policy.Evaluate(secondDirectory));
         Assert.Equal(TraversalDecision.ObserveOnly, policy.Evaluate(firstReparse));
         Assert.Equal(TraversalDecision.ObserveOnly, policy.Evaluate(secondReparse));
+    }
+
+    [Fact]
+    public void NullEntryRejected() =>
+        Assert.Throws<ArgumentNullException>("entry", () => policy.Evaluate((StorageEntry)null!));
+
+    [Theory]
+    [InlineData(StorageObjectKind.Directory, ReparseKind.None, TraversalDecision.TraverseChildren)]
+    [InlineData(StorageObjectKind.File, ReparseKind.None, TraversalDecision.ObserveOnly)]
+    [InlineData(StorageObjectKind.Other, ReparseKind.None, TraversalDecision.ObserveOnly)]
+    [InlineData(StorageObjectKind.Directory, ReparseKind.SymbolicLink, TraversalDecision.ObserveOnly)]
+    [InlineData(StorageObjectKind.Directory, ReparseKind.Junction, TraversalDecision.ObserveOnly)]
+    [InlineData(StorageObjectKind.Directory, ReparseKind.MountPoint, TraversalDecision.ObserveOnly)]
+    [InlineData(StorageObjectKind.Directory, ReparseKind.Other, TraversalDecision.ObserveOnly)]
+    public void EntryPolicyPreservesFailClosedSemantics(StorageObjectKind kind, ReparseKind reparse, TraversalDecision expected)
+    {
+        var entry = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), "path", kind, reparse);
+        Assert.Equal(expected, policy.Evaluate(entry));
+    }
+
+    [Fact]
+    public void ObservationAndEntryDecisionsAreEquivalentForEveryDefinedCombination()
+    {
+        foreach (var kind in Enum.GetValues<StorageObjectKind>())
+        {
+            foreach (var reparse in Enum.GetValues<ReparseKind>())
+            {
+                var observation = CreateObservation(kind, reparse);
+                var entry = new StorageEntry(observation.VolumeIdentity, observation.CanonicalPath, kind, reparse);
+                Assert.Equal(policy.Evaluate(observation), policy.Evaluate(entry));
+            }
+        }
     }
 
     private static StorageObservation CreateObservation(
