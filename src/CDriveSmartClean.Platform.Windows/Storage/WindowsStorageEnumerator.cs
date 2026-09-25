@@ -1,7 +1,7 @@
 using System.Runtime.Versioning;
 using CDriveSmartClean.Application.Scanning.Enumeration;
+using CDriveSmartClean.Application.Scanning.Identity;
 using CDriveSmartClean.Application.Scanning.Observations;
-using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
 
 namespace CDriveSmartClean.Platform.Windows.Storage;
@@ -52,13 +52,12 @@ public sealed class WindowsStorageEnumerator : IStorageEnumerator
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        // Lexical scope and current attributes are not native object identity or a race-free guarantee.
-        FileAttributes attributes = File.GetAttributes(childPath);
-        if ((attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0)
+        if (directory.ObjectIdentity is null)
         {
-            throw new StorageTraversalTargetChangedException(directory.CanonicalPath);
+            throw new StorageObjectIdentityUnavailableException(directory.CanonicalPath);
         }
 
+        using var pinned = WindowsStorageObjectIdentityReader.OpenPinnedDirectory(directory.ObjectIdentity, childPath);
         await EnumerateDirectoryAsync(systemVolume, childPath, entrySink, cancellationToken).ConfigureAwait(false);
     }
 
@@ -93,7 +92,8 @@ public sealed class WindowsStorageEnumerator : IStorageEnumerator
             var reparseKind = (attributes & FileAttributes.ReparsePoint) != 0
                 ? ReparseKind.Other
                 : ReparseKind.None;
-            var entry = new StorageEntry(systemVolume.VolumeIdentity, child.FullName, objectKind, reparseKind);
+            var identity = WindowsStorageObjectIdentityReader.TryRead(systemVolume.VolumeIdentity, child.FullName);
+            var entry = new StorageEntry(systemVolume.VolumeIdentity, identity, child.FullName, objectKind, reparseKind);
             await entrySink.WriteAsync(entry, cancellationToken).ConfigureAwait(false);
         }
     }

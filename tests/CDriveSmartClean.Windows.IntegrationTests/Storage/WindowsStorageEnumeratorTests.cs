@@ -1,6 +1,8 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using CDriveSmartClean.Application.Scanning.Enumeration;
+using CDriveSmartClean.Application.Scanning.Identity;
 using CDriveSmartClean.Application.Scanning.Observations;
 using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
@@ -279,7 +281,7 @@ public sealed class WindowsStorageEnumeratorTests
     public async Task ChildFromAnotherVolumeIsRejectedBeforeFilesystemAccess()
     {
         using var fixture = new RootFixture();
-        var entry = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), Path.Combine(fixture.Root, "missing"), StorageObjectKind.Directory, ReparseKind.None);
+        var entry = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), null, Path.Combine(fixture.Root, "missing"), StorageObjectKind.Directory, ReparseKind.None);
         await Assert.ThrowsAsync<ArgumentException>("directory", () =>
             new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
     }
@@ -292,7 +294,7 @@ public sealed class WindowsStorageEnumeratorTests
     public async Task KnownReparseInputRejected(ReparseKind reparse)
     {
         using var fixture = new RootFixture();
-        var entry = new StorageEntry(fixture.Volume.VolumeIdentity, fixture.Child, StorageObjectKind.Directory, reparse);
+        var entry = new StorageEntry(fixture.Volume.VolumeIdentity, null, fixture.Child, StorageObjectKind.Directory, reparse);
         await Assert.ThrowsAsync<ArgumentException>("directory", () =>
             new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
     }
@@ -303,7 +305,7 @@ public sealed class WindowsStorageEnumeratorTests
     public async Task NonDirectoryChildRejected(StorageObjectKind kind)
     {
         using var fixture = new RootFixture();
-        var entry = new StorageEntry(fixture.Volume.VolumeIdentity, fixture.Child, kind, ReparseKind.None);
+        var entry = new StorageEntry(fixture.Volume.VolumeIdentity, null, fixture.Child, kind, ReparseKind.None);
         await Assert.ThrowsAsync<ArgumentException>("directory", () =>
             new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
     }
@@ -362,8 +364,349 @@ public sealed class WindowsStorageEnumeratorTests
         Assert.Empty(sink.Entries);
     }
 
+    [Fact]
+    public async Task NativeIdentityStableAcrossReadsAndDistinctAcrossFiles()
+    {
+        using var fixture = new RootFixture();
+        var first = await Observe(fixture);
+        var second = await Observe(fixture);
+        Assert.All(first, entry => Assert.NotNull(entry.ObjectIdentity));
+        foreach (var entry in first)
+        {
+            Assert.Equal(entry.ObjectIdentity, Assert.Single(second, e => e.CanonicalPath == entry.CanonicalPath).ObjectIdentity);
+        }
+
+        Assert.NotEqual(Assert.Single(first, e => e.CanonicalPath == fixture.Ordinary).ObjectIdentity,
+            Assert.Single(first, e => e.CanonicalPath == fixture.Hidden).ObjectIdentity);
+    }
+
+    [Fact]
+    public async Task HardLinkIdentityEquivalentAndBothPathsVisible()
+    {
+        using var fixture = new RootFixture();
+        string link = Path.Combine(fixture.Root, "hard-link.bin");
+        try
+        {
+            bool created = CreateHardLinkW(link, fixture.Ordinary, 0);
+            int error = Marshal.GetLastPInvokeError();
+            Assert.True(created, $"Test hard-link creation failed: {error}");
+            var entries = await Observe(fixture);
+            var original = Assert.Single(entries, e => e.CanonicalPath == fixture.Ordinary);
+            var alias = Assert.Single(entries, e => e.CanonicalPath == link);
+            Assert.NotNull(original.ObjectIdentity);
+            Assert.NotNull(alias.ObjectIdentity);
+            Assert.Equal(original.ObjectIdentity, alias.ObjectIdentity);
+            Assert.NotEqual(original.CanonicalPath, alias.CanonicalPath);
+        }
+        finally
+        {
+            File.Delete(link);
+        }
+    }
+
+    [Fact]
+    public async Task SamePathDirectoryReplacementIsDetected()
+    {
+        using var fixture = new RootFixture();
+        string path = Path.Combine(fixture.Root, "candidate");
+        Directory.CreateDirectory(path);
+        try
+        {
+            var original = Assert.Single(await Observe(fixture), e => e.CanonicalPath == path);
+            Assert.NotNull(original.ObjectIdentity);
+            Directory.Delete(path);
+            Directory.CreateDirectory(path);
+            var replacement = Assert.Single(await Observe(fixture), e => e.CanonicalPath == path);
+            Assert.NotNull(replacement.ObjectIdentity);
+            Assert.NotEqual(original.ObjectIdentity, replacement.ObjectIdentity);
+            var sink = new CollectingSink();
+            var error = await Assert.ThrowsAsync<StorageTraversalTargetChangedException>(() =>
+                new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, original, sink, TestContext.Current.CancellationToken));
+            Assert.Equal(path, error.CanonicalPath);
+            Assert.Empty(sink.Entries);
+        }
+        finally
+        {
+            Directory.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task PinnedHandlePreventsTargetReplacementUntilSinkCompletes()
+    {
+        using var fixture = new RootFixture();
+        var candidate = Assert.Single(await Observe(fixture), e => e.CanonicalPath == fixture.Child);
+        Assert.NotNull(candidate.ObjectIdentity);
+        string moved = Path.Combine(fixture.Root, "moved-child");
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sink = new CallbackSink((_, _) =>
+        {
+            entered.TrySetResult();
+            return new ValueTask(release.Task);
+        });
+        Task enumeration = new WindowsStorageEnumerator().EnumerateChildrenAsync(
+            fixture.Volume, candidate, sink, TestContext.Current.CancellationToken);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            Assert.False(enumeration.IsCompleted);
+            Assert.Throws<IOException>(() => Directory.Move(fixture.Child, moved));
+            Assert.True(Directory.Exists(fixture.Child));
+            Assert.False(Directory.Exists(moved));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await enumeration.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            // Restore only the fixture's exact path if a failed assertion exposed a pinning defect.
+            if (Directory.Exists(moved))
+            {
+                Directory.Move(moved, fixture.Child);
+            }
+        }
+
+        Directory.Move(fixture.Child, moved);
+        Directory.Move(moved, fixture.Child);
+    }
+
+    [Fact]
+    public async Task NullDirectoryIdentityFailsClosed()
+    {
+        using var fixture = new RootFixture();
+        var candidate = new StorageEntry(fixture.Volume.VolumeIdentity, null, fixture.Child, StorageObjectKind.Directory, ReparseKind.None);
+        var sink = new CollectingSink();
+        var error = await Assert.ThrowsAsync<StorageObjectIdentityUnavailableException>(() =>
+            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, candidate, sink, TestContext.Current.CancellationToken));
+        Assert.Equal(fixture.Child, error.CanonicalPath);
+        Assert.Empty(sink.Entries);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PinnedHandleReleasedWhenChildSinkFailsOrCancels(bool cancel)
+    {
+        using var fixture = new RootFixture();
+        var candidate = Assert.Single(await Observe(fixture), e => e.CanonicalPath == fixture.Child);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Exception expected = cancel ? new OperationCanceledException(cancellation.Token) : new IOException("sink failure");
+        var sink = new CallbackSink((_, _) => ValueTask.FromException(expected));
+        var actual = await Record.ExceptionAsync(() => new WindowsStorageEnumerator().EnumerateChildrenAsync(
+            fixture.Volume, candidate, sink, TestContext.Current.CancellationToken));
+        Assert.Same(expected, actual);
+        string moved = Path.Combine(fixture.Root, "released-child");
+        try
+        {
+            Directory.Move(fixture.Child, moved);
+        }
+        finally
+        {
+            if (Directory.Exists(moved))
+            {
+                Directory.Move(moved, fixture.Child);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ObservationDoesNotPinButStrictTraversalReportsSharingConflict()
+    {
+        using var fixture = new RootFixture();
+        // DELETE access with share-all makes observation possible but conflicts with a traversal pin.
+        using var locked = TestCreateFile(fixture.Child, 0x00010000, 7, 0, 3, 0x02200000, 0);
+        Assert.False(locked.IsInvalid);
+        var candidate = Assert.Single(await Observe(fixture), e => e.CanonicalPath == fixture.Child);
+        Assert.NotNull(candidate.ObjectIdentity);
+        await Assert.ThrowsAsync<StorageObjectIdentityUnavailableException>(() => new WindowsStorageEnumerator().EnumerateChildrenAsync(
+            fixture.Volume, candidate, new CollectingSink(), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void BestEffortMissingIdentityReturnsNull()
+    {
+        using var fixture = new RootFixture();
+        Assert.Null(ReadIdentity(fixture.Volume.VolumeIdentity, Path.Combine(fixture.Root, "absent")));
+    }
+
+    [Fact]
+    public void NativeInteropSurfaceLayoutsAndNoFollowFlagsAreExact()
+    {
+        Type native = typeof(WindowsStorageEnumerator).Assembly.GetType(
+            "CDriveSmartClean.Platform.Windows.Interop.Kernel32FileIdentityNative", true)!;
+        Assert.False(native.IsPublic);
+        Assert.False(IdentityReader.IsPublic);
+        var methods = native.GetMethods(BindingFlags.NonPublic | BindingFlags.Static);
+        var imports = methods.Select(m => m.GetCustomAttribute<DllImportAttribute>()).OfType<DllImportAttribute>().ToArray();
+        Assert.Equal(["CreateFileW", "GetFileInformationByHandleEx"], imports.Select(i => i.EntryPoint).Distinct().Order(StringComparer.Ordinal));
+        Assert.All(imports, import =>
+        {
+            Assert.Equal("kernel32.dll", import.Value);
+            Assert.True(import.SetLastError);
+            Assert.True(import.ExactSpelling);
+        });
+        Assert.Equal(typeof(Microsoft.Win32.SafeHandles.SafeFileHandle), native.GetMethod("CreateFileW", BindingFlags.NonPublic | BindingFlags.Static)!.ReturnType);
+        uint flags = (uint)native.GetField("IdentityOpenFlags", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue()!;
+        Assert.Equal(0x02200000u, flags);
+        Assert.Equal(7u, native.GetField("ObservationShare", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
+        Assert.Equal(3u, native.GetField("TraversalShare", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
+        Assert.Equal(1u, native.GetField("DirectoryListAccess", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
+        Assert.Equal(3u, native.GetField("OpenExisting", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
+        Type id128 = native.GetNestedType("FileId128", BindingFlags.NonPublic)!;
+        Type idInfo = native.GetNestedType("FileIdInfo", BindingFlags.NonPublic)!;
+        Type tagInfo = native.GetNestedType("FileAttributeTagInfo", BindingFlags.NonPublic)!;
+        Assert.Equal(16, Marshal.SizeOf(id128));
+        Assert.Equal(24, Marshal.SizeOf(idInfo));
+        Assert.Equal(8, Marshal.SizeOf(tagInfo));
+        Assert.Equal((nint)8, Marshal.OffsetOf(idInfo, "FileId"));
+        Assert.Equal((nint)4, Marshal.OffsetOf(tagInfo, "ReparseTag"));
+        Type infoClass = native.GetNestedType("FileInfoByHandleClass", BindingFlags.NonPublic)!;
+        Assert.Equal(0x12, Convert.ToInt32(Enum.Parse(infoClass, "FileIdInfo"), System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal(9, Convert.ToInt32(Enum.Parse(infoClass, "FileAttributeTagInfo"), System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void FileIdAll128BitsArePreservedWithoutUuidInterpretation()
+    {
+        Type id = typeof(WindowsStorageEnumerator).Assembly.GetType(
+            "CDriveSmartClean.Platform.Windows.Interop.Kernel32FileIdentityNative+FileId128", true)!;
+        object native = Activator.CreateInstance(id)!;
+        id.GetField("Low", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(native, 0x0706050403020100ul);
+        id.GetField("High", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(native, 0x0f0e0d0c0b0a0908ul);
+        var convert = id.GetMethod("ToOpaqueGuid", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var actual = (Guid)convert.Invoke(native, null)!;
+        Assert.Equal(Enumerable.Range(0, 16).Select(i => (byte)i), actual.ToByteArray());
+        Assert.Equal(actual, (Guid)convert.Invoke(native, null)!);
+        id.GetField("High", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(native, 0x8f0e0d0c0b0a0908ul);
+        Assert.NotEqual(actual, (Guid)convert.Invoke(native, null)!);
+    }
+
+    [Fact]
+    public void EmptyNativeIdFailsClosed()
+    {
+        var method = IdentityReader.GetMethod("CreateIdentity", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, [new VolumeIdentity(Guid.NewGuid()), Guid.Empty, "path"]));
+        Assert.Equal("path", Assert.IsType<StorageObjectIdentityUnavailableException>(error.InnerException).CanonicalPath);
+    }
+
+    [Theory]
+    [InlineData(2, typeof(FileNotFoundException))]
+    [InlineData(3, typeof(DirectoryNotFoundException))]
+    [InlineData(5, typeof(UnauthorizedAccessException))]
+    [InlineData(1, typeof(StorageObjectIdentityUnavailableException))]
+    [InlineData(50, typeof(StorageObjectIdentityUnavailableException))]
+    [InlineData(87, typeof(StorageObjectIdentityUnavailableException))]
+    [InlineData(32, typeof(StorageObjectIdentityUnavailableException))]
+    [InlineData(31, typeof(IOException))]
+    public void NativeErrorsMappedWithoutLosingIoEvidence(int code, Type expected)
+    {
+        var method = IdentityReader.GetMethod("NativeFailure", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var error = Assert.IsAssignableFrom<Exception>(method.Invoke(null, [code, "path"]));
+        Assert.Equal(expected, error.GetType());
+        if (code == 31)
+        {
+            Assert.Equal(code, Assert.IsType<System.ComponentModel.Win32Exception>(error.InnerException).NativeErrorCode);
+        }
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    [InlineData(2, true)]
+    [InlineData(3, true)]
+    [InlineData(4, false)]
+    [InlineData(5, false)]
+    public void BestEffortExceptionClassificationIsExplicit(int kind, bool expected)
+    {
+        Exception exception = kind switch
+        {
+            0 => new UnauthorizedAccessException("test"),
+            1 => new FileNotFoundException("test"),
+            2 => new DirectoryNotFoundException("test"),
+            3 => new StorageObjectIdentityUnavailableException("path"),
+            4 => new IOException("unclassified"),
+            _ => new InvalidOperationException("programming defect"),
+        };
+        Assert.Equal(expected, IsExpectedIdentityFailure(exception));
+    }
+
+    [Fact]
+    public void SharingViolationMappingIsExplicitlySuppressible()
+    {
+        // Deterministic native-error mapping, not a claim that an actual open returned error 32.
+        var mapper = IdentityReader.GetMethod("NativeFailure", BindingFlags.NonPublic | BindingFlags.Static)!;
+        Assert.True(mapper.IsPrivate);
+        var exception = Assert.IsType<StorageObjectIdentityUnavailableException>(mapper.Invoke(null, [32, "exact path"]));
+        Assert.Equal("exact path", exception.CanonicalPath);
+        Assert.True(IsExpectedIdentityFailure(exception));
+    }
+
+    [Fact]
+    public void UnclassifiedNativeErrorIsNotSuppressibleAndPreservesEvidence()
+    {
+        var mapper = IdentityReader.GetMethod("NativeFailure", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var exception = Assert.IsType<IOException>(mapper.Invoke(null, [31, "path"]));
+        Assert.Equal(31, Assert.IsType<System.ComponentModel.Win32Exception>(exception.InnerException).NativeErrorCode);
+        Assert.False(IsExpectedIdentityFailure(exception));
+    }
+
+    [Theory]
+    [InlineData(0x80000000u)]
+    [InlineData(0x40000000u)]
+    [InlineData(0x00010000u)]
+    public async Task ZeroAccessShareAllObservationSucceedsUnderExclusiveHolder(uint holderAccess)
+    {
+        using var fixture = new RootFixture();
+        var original = Assert.Single(await Observe(fixture), entry => entry.CanonicalPath == fixture.Ordinary);
+        Assert.NotNull(original.ObjectIdentity);
+        using var held = TestCreateFile(fixture.Ordinary, holderAccess, 0, 0, 3, 0x02200000, 0);
+        int error = Marshal.GetLastPInvokeError();
+        Assert.False(held.IsInvalid, $"Exclusive test holder failed: {error}");
+
+        var entries = await Observe(fixture);
+        var observed = Assert.Single(entries, entry => entry.CanonicalPath == fixture.Ordinary);
+        Assert.NotNull(observed.ObjectIdentity);
+        Assert.Equal(original.ObjectIdentity, observed.ObjectIdentity);
+        Assert.Equal(3, entries.Count);
+        Assert.Contains(entries, entry => entry.CanonicalPath == fixture.Hidden);
+        Assert.Contains(entries, entry => entry.CanonicalPath == fixture.Child);
+        Assert.False(held.IsClosed);
+    }
+
+    private static bool IsExpectedIdentityFailure(Exception exception)
+    {
+        var classifier = IdentityReader.GetMethod("IsExpectedIdentityFailure", BindingFlags.NonPublic | BindingFlags.Static)!;
+        Assert.True(classifier.IsPrivate);
+        return Assert.IsType<bool>(classifier.Invoke(null, [exception]));
+    }
+
+    private static async Task<List<StorageEntry>> Observe(RootFixture fixture)
+    {
+        var sink = new CollectingSink();
+        await new WindowsStorageEnumerator().EnumerateRootAsync(fixture.Volume, sink, TestContext.Current.CancellationToken);
+        return sink.Entries;
+    }
+
+    // Test-only mutations are restricted to RootFixture's Directory.CreateTempSubdirectory storage.
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLinkW(string fileName, string existingFileName, nint securityAttributes);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static extern Microsoft.Win32.SafeHandles.SafeFileHandle TestCreateFile(
+        string path, uint access, uint share, nint security, uint disposition, uint flags, nint template);
+
     private static StorageEntry Candidate(RootFixture fixture, string? path = null) =>
-        new(fixture.Volume.VolumeIdentity, path ?? fixture.Child, StorageObjectKind.Directory, ReparseKind.None);
+        new(fixture.Volume.VolumeIdentity, ReadIdentity(fixture.Volume.VolumeIdentity, path ?? fixture.Child), path ?? fixture.Child, StorageObjectKind.Directory, ReparseKind.None);
+
+    private static Type IdentityReader => typeof(WindowsStorageEnumerator).Assembly.GetType(
+        "CDriveSmartClean.Platform.Windows.Storage.WindowsStorageObjectIdentityReader", true)!;
+
+    private static StorageObjectIdentity? ReadIdentity(VolumeIdentity volume, string path) =>
+        (StorageObjectIdentity?)IdentityReader.GetMethod("TryRead", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [volume, path]);
 
     private static void AssertDirectChild(string root, string path)
     {
