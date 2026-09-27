@@ -485,6 +485,27 @@ public sealed class StorageTreeWalkerTests
         Assert.Empty(h.Enumerator.ChildCalls);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProvenanceInvariantFailureIsFatalAtRootAndChild(bool atRoot)
+    {
+        var h = new Harness();
+        var expected = new System.Security.SecurityException("Contradictory native provenance");
+        h.Enumerator.Root = [h.Entry("bad", StorageObjectKind.Directory)];
+        if (atRoot)
+        {
+            h.Enumerator.RootError = expected;
+        }
+        else
+        {
+            h.Enumerator.Errors["bad"] = expected;
+        }
+
+        Assert.Same(expected, await Record.ExceptionAsync(() => h.Walk(TestContext.Current.CancellationToken)));
+        Assert.Empty(h.Issues.Values);
+    }
+
     private static Exception Failure(int value) => value switch
     {
         0 => new UnauthorizedAccessException("enumerator"),

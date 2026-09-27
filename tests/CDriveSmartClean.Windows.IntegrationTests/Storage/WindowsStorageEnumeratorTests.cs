@@ -12,6 +12,7 @@ using Xunit;
 
 namespace CDriveSmartClean.Windows.IntegrationTests.Storage;
 
+[Collection("WindowsNativeTraversal")]
 public sealed class WindowsStorageEnumeratorTests
 {
     [Fact]
@@ -60,7 +61,7 @@ public sealed class WindowsStorageEnumeratorTests
     {
         using var fixture = new RootFixture();
         var sink = new CollectingSink();
-        await new WindowsStorageEnumerator().EnumerateRootAsync(fixture.Volume, sink, CancellationToken.None);
+        await fixture.Enumerator.EnumerateRootAsync(fixture.Volume, sink, CancellationToken.None);
 
         Assert.Equal(["child", "hidden.bin", "ordinary.bin"], sink.Entries.Select(e => Path.GetFileName(e.CanonicalPath)).Order(StringComparer.Ordinal));
         Assert.All(sink.Entries, entry =>
@@ -86,7 +87,7 @@ public sealed class WindowsStorageEnumeratorTests
     {
         using var fixture = new RootFixture();
         await Assert.ThrowsAsync<ArgumentNullException>("entrySink", () =>
-            new WindowsStorageEnumerator().EnumerateRootAsync(fixture.Volume, null!, CancellationToken.None));
+            fixture.Enumerator.EnumerateRootAsync(fixture.Volume, null!, CancellationToken.None));
     }
 
     [Fact]
@@ -98,7 +99,7 @@ public sealed class WindowsStorageEnumeratorTests
         var sink = new CollectingSink();
         var missing = new SystemVolumeDescriptor(fixture.Volume.VolumeIdentity, Path.Combine(fixture.Root, "missing"));
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            new WindowsStorageEnumerator().EnumerateRootAsync(missing, sink, cancellation.Token));
+            fixture.Enumerator.EnumerateRootAsync(missing, sink, cancellation.Token));
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.Empty(sink.Entries);
     }
@@ -117,7 +118,7 @@ public sealed class WindowsStorageEnumeratorTests
             return ValueTask.CompletedTask;
         });
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            new WindowsStorageEnumerator().EnumerateRootAsync(fixture.Volume, sink, cancellation.Token));
+            fixture.Enumerator.EnumerateRootAsync(fixture.Volume, sink, cancellation.Token));
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.Equal(1, calls);
     }
@@ -141,7 +142,7 @@ public sealed class WindowsStorageEnumeratorTests
             return ValueTask.FromException(expected);
         });
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new WindowsStorageEnumerator().EnumerateRootAsync(fixture.Volume, sink, CancellationToken.None));
+            fixture.Enumerator.EnumerateRootAsync(fixture.Volume, sink, CancellationToken.None));
         Assert.Same(expected, actual);
         Assert.Equal(1, calls);
     }
@@ -159,7 +160,7 @@ public sealed class WindowsStorageEnumeratorTests
             return ValueTask.FromCanceled(cancellation.Token);
         });
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            new WindowsStorageEnumerator().EnumerateRootAsync(fixture.Volume, sink, CancellationToken.None));
+            fixture.Enumerator.EnumerateRootAsync(fixture.Volume, sink, CancellationToken.None));
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.Equal(1, calls);
     }
@@ -183,7 +184,7 @@ public sealed class WindowsStorageEnumeratorTests
             Assert.True(release.Task.IsCompletedSuccessfully);
             return ValueTask.CompletedTask;
         });
-        Task enumeration = new WindowsStorageEnumerator().EnumerateRootAsync(fixture.Volume, sink, CancellationToken.None);
+        Task enumeration = fixture.Enumerator.EnumerateRootAsync(fixture.Volume, sink, CancellationToken.None);
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
@@ -205,8 +206,8 @@ public sealed class WindowsStorageEnumeratorTests
         using var fixture = new RootFixture();
         var volume = new SystemVolumeDescriptor(fixture.Volume.VolumeIdentity, Path.Combine(fixture.Root, "missing"));
         var sink = new CollectingSink();
-        await Assert.ThrowsAsync<DirectoryNotFoundException>(() =>
-            new WindowsStorageEnumerator().EnumerateRootAsync(volume, sink, CancellationToken.None));
+        await Assert.ThrowsAnyAsync<System.Security.SecurityException>(() =>
+            fixture.Enumerator.EnumerateRootAsync(volume, sink, CancellationToken.None));
         Assert.Empty(sink.Entries);
     }
 
@@ -231,7 +232,7 @@ public sealed class WindowsStorageEnumeratorTests
     {
         using var fixture = new RootFixture();
         var sink = new CollectingSink();
-        await new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, Candidate(fixture), sink, CancellationToken.None);
+        await fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, Candidate(fixture), sink, CancellationToken.None);
         var entry = Assert.Single(sink.Entries);
         Assert.Equal(fixture.Grandchild, entry.CanonicalPath);
         Assert.Same(fixture.Volume.VolumeIdentity, entry.VolumeIdentity);
@@ -252,7 +253,7 @@ public sealed class WindowsStorageEnumeratorTests
         {
             var sink = new CollectingSink();
             var error = await Assert.ThrowsAsync<StorageTraversalTargetChangedException>(() =>
-                new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, candidate, sink, CancellationToken.None));
+                fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, candidate, sink, CancellationToken.None));
             Assert.Equal(path, error.CanonicalPath);
             Assert.Empty(sink.Entries);
         }
@@ -272,7 +273,7 @@ public sealed class WindowsStorageEnumeratorTests
         Directory.Delete(path);
         var sink = new CollectingSink();
         var error = await Record.ExceptionAsync(() =>
-            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, candidate, sink, CancellationToken.None));
+            fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, candidate, sink, CancellationToken.None));
         Assert.True(error is DirectoryNotFoundException or FileNotFoundException);
         Assert.Empty(sink.Entries);
     }
@@ -283,7 +284,7 @@ public sealed class WindowsStorageEnumeratorTests
         using var fixture = new RootFixture();
         var entry = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), null, Path.Combine(fixture.Root, "missing"), StorageObjectKind.Directory, ReparseKind.None);
         await Assert.ThrowsAsync<ArgumentException>("directory", () =>
-            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
+            fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
     }
 
     [Theory]
@@ -296,7 +297,7 @@ public sealed class WindowsStorageEnumeratorTests
         using var fixture = new RootFixture();
         var entry = new StorageEntry(fixture.Volume.VolumeIdentity, null, fixture.Child, StorageObjectKind.Directory, reparse);
         await Assert.ThrowsAsync<ArgumentException>("directory", () =>
-            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
+            fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
     }
 
     [Theory]
@@ -307,7 +308,7 @@ public sealed class WindowsStorageEnumeratorTests
         using var fixture = new RootFixture();
         var entry = new StorageEntry(fixture.Volume.VolumeIdentity, null, fixture.Child, kind, ReparseKind.None);
         await Assert.ThrowsAsync<ArgumentException>("directory", () =>
-            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
+            fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, entry, new CollectingSink(), CancellationToken.None));
     }
 
     [Theory]
@@ -326,7 +327,7 @@ public sealed class WindowsStorageEnumeratorTests
             _ => Path.Combine(fixture.Root, "..", "outside"),
         };
         await Assert.ThrowsAsync<ArgumentException>("directory", () =>
-            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, Candidate(fixture, path), new CollectingSink(), CancellationToken.None));
+            fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, Candidate(fixture, path), new CollectingSink(), CancellationToken.None));
     }
 
     [Fact]
@@ -338,7 +339,7 @@ public sealed class WindowsStorageEnumeratorTests
         try
         {
             var sink = new CollectingSink();
-            await new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, Candidate(fixture, path), sink, CancellationToken.None);
+            await fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, Candidate(fixture, path), sink, CancellationToken.None);
             Assert.Empty(sink.Entries);
         }
         finally
@@ -351,7 +352,7 @@ public sealed class WindowsStorageEnumeratorTests
     public async Task ChildBoundaryRejectsNullArgumentsAndPreCancellation()
     {
         using var fixture = new RootFixture();
-        var enumerator = new WindowsStorageEnumerator();
+        var enumerator = fixture.Enumerator;
         var sink = new CollectingSink();
         await Assert.ThrowsAsync<ArgumentNullException>("systemVolume", () => enumerator.EnumerateChildrenAsync(null!, Candidate(fixture), sink, CancellationToken.None));
         await Assert.ThrowsAsync<ArgumentNullException>("directory", () => enumerator.EnumerateChildrenAsync(fixture.Volume, null!, sink, CancellationToken.None));
@@ -421,7 +422,7 @@ public sealed class WindowsStorageEnumeratorTests
             Assert.NotEqual(original.ObjectIdentity, replacement.ObjectIdentity);
             var sink = new CollectingSink();
             var error = await Assert.ThrowsAsync<StorageTraversalTargetChangedException>(() =>
-                new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, original, sink, TestContext.Current.CancellationToken));
+                fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, original, sink, TestContext.Current.CancellationToken));
             Assert.Equal(path, error.CanonicalPath);
             Assert.Empty(sink.Entries);
         }
@@ -445,7 +446,7 @@ public sealed class WindowsStorageEnumeratorTests
             entered.TrySetResult();
             return new ValueTask(release.Task);
         });
-        Task enumeration = new WindowsStorageEnumerator().EnumerateChildrenAsync(
+        Task enumeration = fixture.Enumerator.EnumerateChildrenAsync(
             fixture.Volume, candidate, sink, TestContext.Current.CancellationToken);
         try
         {
@@ -477,7 +478,7 @@ public sealed class WindowsStorageEnumeratorTests
         var candidate = new StorageEntry(fixture.Volume.VolumeIdentity, null, fixture.Child, StorageObjectKind.Directory, ReparseKind.None);
         var sink = new CollectingSink();
         var error = await Assert.ThrowsAsync<StorageObjectIdentityUnavailableException>(() =>
-            new WindowsStorageEnumerator().EnumerateChildrenAsync(fixture.Volume, candidate, sink, TestContext.Current.CancellationToken));
+            fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, candidate, sink, TestContext.Current.CancellationToken));
         Assert.Equal(fixture.Child, error.CanonicalPath);
         Assert.Empty(sink.Entries);
     }
@@ -493,7 +494,7 @@ public sealed class WindowsStorageEnumeratorTests
         cancellation.Cancel();
         Exception expected = cancel ? new OperationCanceledException(cancellation.Token) : new IOException("sink failure");
         var sink = new CallbackSink((_, _) => ValueTask.FromException(expected));
-        var actual = await Record.ExceptionAsync(() => new WindowsStorageEnumerator().EnumerateChildrenAsync(
+        var actual = await Record.ExceptionAsync(() => fixture.Enumerator.EnumerateChildrenAsync(
             fixture.Volume, candidate, sink, TestContext.Current.CancellationToken));
         Assert.Same(expected, actual);
         string moved = Path.Combine(fixture.Root, "released-child");
@@ -519,7 +520,7 @@ public sealed class WindowsStorageEnumeratorTests
         Assert.False(locked.IsInvalid);
         var candidate = Assert.Single(await Observe(fixture), e => e.CanonicalPath == fixture.Child);
         Assert.NotNull(candidate.ObjectIdentity);
-        await Assert.ThrowsAsync<StorageObjectIdentityUnavailableException>(() => new WindowsStorageEnumerator().EnumerateChildrenAsync(
+        await Assert.ThrowsAsync<StorageObjectIdentityUnavailableException>(() => fixture.Enumerator.EnumerateChildrenAsync(
             fixture.Volume, candidate, new CollectingSink(), TestContext.Current.CancellationToken));
     }
 
@@ -539,7 +540,7 @@ public sealed class WindowsStorageEnumeratorTests
         Assert.False(IdentityReader.IsPublic);
         var methods = native.GetMethods(BindingFlags.NonPublic | BindingFlags.Static);
         var imports = methods.Select(m => m.GetCustomAttribute<DllImportAttribute>()).OfType<DllImportAttribute>().ToArray();
-        Assert.Equal(["CreateFileW", "GetFileInformationByHandleEx"], imports.Select(i => i.EntryPoint).Distinct().Order(StringComparer.Ordinal));
+        Assert.Equal(["CreateFileW", "GetFileInformationByHandleEx", "GetFinalPathNameByHandleW"], imports.Select(i => i.EntryPoint).Distinct().Order(StringComparer.Ordinal));
         Assert.All(imports, import =>
         {
             Assert.Equal("kernel32.dll", import.Value);
@@ -550,7 +551,7 @@ public sealed class WindowsStorageEnumeratorTests
         uint flags = (uint)native.GetField("IdentityOpenFlags", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue()!;
         Assert.Equal(0x02200000u, flags);
         Assert.Equal(7u, native.GetField("ObservationShare", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
-        Assert.Equal(3u, native.GetField("TraversalShare", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
+        Assert.Equal(1u, native.GetField("TraversalShare", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
         Assert.Equal(1u, native.GetField("DirectoryListAccess", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
         Assert.Equal(3u, native.GetField("OpenExisting", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
         Type id128 = native.GetNestedType("FileId128", BindingFlags.NonPublic)!;
@@ -636,7 +637,7 @@ public sealed class WindowsStorageEnumeratorTests
     {
         // Deterministic native-error mapping, not a claim that an actual open returned error 32.
         var mapper = IdentityReader.GetMethod("NativeFailure", BindingFlags.NonPublic | BindingFlags.Static)!;
-        Assert.True(mapper.IsPrivate);
+        Assert.False(mapper.IsPublic);
         var exception = Assert.IsType<StorageObjectIdentityUnavailableException>(mapper.Invoke(null, [32, "exact path"]));
         Assert.Equal("exact path", exception.CanonicalPath);
         Assert.True(IsExpectedIdentityFailure(exception));
@@ -684,7 +685,7 @@ public sealed class WindowsStorageEnumeratorTests
     private static async Task<List<StorageEntry>> Observe(RootFixture fixture)
     {
         var sink = new CollectingSink();
-        await new WindowsStorageEnumerator().EnumerateRootAsync(fixture.Volume, sink, TestContext.Current.CancellationToken);
+        await fixture.Enumerator.EnumerateRootAsync(fixture.Volume, sink, TestContext.Current.CancellationToken);
         return sink.Entries;
     }
 
@@ -706,7 +707,7 @@ public sealed class WindowsStorageEnumeratorTests
         "CDriveSmartClean.Platform.Windows.Storage.WindowsStorageObjectIdentityReader", true)!;
 
     private static StorageObjectIdentity? ReadIdentity(VolumeIdentity volume, string path) =>
-        (StorageObjectIdentity?)IdentityReader.GetMethod("TryRead", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [volume, path]);
+        WindowsStorageFixture.ReadIdentity(volume, path);
 
     private static void AssertDirectChild(string root, string path)
     {
@@ -736,56 +737,7 @@ public sealed class WindowsStorageEnumeratorTests
         public ValueTask WriteAsync(StorageEntry entry, CancellationToken cancellationToken) => write(entry, cancellationToken);
     }
 
-    private sealed class RootFixture : IDisposable
+    private sealed class RootFixture : WindowsStorageFixture
     {
-        public RootFixture()
-        {
-            Root = Directory.CreateTempSubdirectory("CDriveSmartClean-F1-09-").FullName;
-            try
-            {
-                Directory.CreateDirectory(Child);
-                File.WriteAllText(Ordinary, "fixture");
-                File.WriteAllText(Grandchild, "must not be enumerated");
-                File.WriteAllText(Hidden, "visible to enumeration");
-                File.SetAttributes(Hidden, FileAttributes.Hidden | FileAttributes.System);
-                Volume = new SystemVolumeDescriptor(new VolumeIdentity(new Guid("336d3520-fd79-4b49-85df-2f41bf352376")), Root);
-            }
-            catch
-            {
-                Dispose();
-                throw;
-            }
-        }
-
-        public string Root { get; }
-
-        public string Child => Path.Combine(Root, "child");
-
-        public string Ordinary => Path.Combine(Root, "ordinary.bin");
-
-        public string Grandchild => Path.Combine(Child, "grandchild.bin");
-
-        public string Hidden => Path.Combine(Root, "hidden.bin");
-
-        public SystemVolumeDescriptor Volume { get; }
-
-        public void Dispose()
-        {
-            // Delete only known test-owned paths; never recursively remove a directory tree.
-            if (File.Exists(Hidden))
-            {
-                File.SetAttributes(Hidden, FileAttributes.Normal);
-                File.Delete(Hidden);
-            }
-
-            File.Delete(Ordinary);
-            File.Delete(Grandchild);
-            if (Directory.Exists(Child))
-            {
-                Directory.Delete(Child);
-            }
-
-            Directory.Delete(Root);
-        }
     }
 }

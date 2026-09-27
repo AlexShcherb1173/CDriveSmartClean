@@ -9,13 +9,16 @@ internal static class Kernel32FileIdentityNative
     internal const uint OpenExisting = 3;
     internal const uint IdentityOpenFlags = 0x02000000 | 0x00200000; // BACKUP_SEMANTICS | OPEN_REPARSE_POINT
     internal const uint ObservationShare = 1 | 2 | 4; // READ | WRITE | DELETE
-    internal const uint TraversalShare = 1 | 2; // READ | WRITE, deliberately deny DELETE
+    internal const uint TraversalShare = 1; // READ only: deny WRITE and DELETE for the entire chain lease.
     internal const uint DirectoryListAccess = 1; // FILE_LIST_DIRECTORY participates in share checking
+    internal const uint TraversalAccess = 0x00100081; // LIST_DIRECTORY | READ_ATTRIBUTES | SYNCHRONIZE
 
     internal enum FileInfoByHandleClass
     {
         FileAttributeTagInfo = 9,
         FileIdInfo = 0x12,
+        FileIdExtdDirectoryInfo = 0x13,
+        FileIdExtdDirectoryRestartInfo = 0x14,
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -65,4 +68,13 @@ internal static class Kernel32FileIdentityNative
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetAttributeTagInfo(
         SafeFileHandle file, FileInfoByHandleClass informationClass, out FileAttributeTagInfo information, uint size);
+
+    [DllImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", ExactSpelling = true, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetDirectoryInfo(SafeFileHandle file, FileInfoByHandleClass informationClass, nint buffer, uint size);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    internal static extern uint GetFinalPathNameByHandleW(SafeFileHandle file, [Out] char[] path, uint length, uint flags);
 }
