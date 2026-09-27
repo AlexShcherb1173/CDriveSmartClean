@@ -26,6 +26,18 @@ jobs:
       - name: Show .NET information
         run: dotnet --info
 
+      - name: Verify .NET host is x64
+        shell: pwsh
+        run: |
+          $dotnetInfo = & dotnet --info
+          if ($LASTEXITCODE -ne 0) { throw "dotnet --info failed with exit code $LASTEXITCODE" }
+          $hostSection = [regex]::Match(($dotnetInfo -join "`n"), '(?m)^Host:\r?\n(?<host>(?:[ \t]+[^\r\n]*\r?\n)+)')
+          $architecture = [regex]::Match($hostSection.Groups['host'].Value, '(?m)^[ \t]+Architecture:[ \t]+(?<architecture>\S+)[ \t]*$')
+          if (-not $hostSection.Success -or -not $architecture.Success -or $architecture.Groups['architecture'].Value -ne 'x64') {
+            throw "F1-11 native traversal requires an x64 .NET host; Host Architecture was absent or not x64."
+          }
+          Write-Output "Verified .NET Host Architecture: x64"
+
       - name: Restore
         run: dotnet restore CDriveSmartClean.sln
 

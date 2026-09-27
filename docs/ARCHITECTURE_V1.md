@@ -37,6 +37,12 @@ Baseline technology:
 
 The business/domain layers must not depend on WPF, SQLite, AI SDKs, or Windows UI frameworks.
 
+### Current implementation support (F1-11)
+
+F1-11 Windows native traversal requires an **x64 .NET process**. Platform.Windows and its native integration tests are built with `PlatformTarget=x64`. The platform adapter is currently a class library; future executable/installer publication requires a compatible x64 process.
+
+Native Windows ARM64 and x86 support are not implemented or verified. Running an x64 process under emulation on ARM64 is not native ARM64 support and is not tested here. Real cross-volume mount-point redirection and ReFS integration remain untested. Runtime fail-closed architecture and ABI checks remain defense in depth, not proof of non-x64 compatibility.
+
 ## 3. High-level system
 
 ```text

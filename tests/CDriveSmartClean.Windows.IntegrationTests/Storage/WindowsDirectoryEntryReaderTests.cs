@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
 using System.Reflection;
+using System.Reflection.PortableExecutable;
+using System.Runtime.InteropServices;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Identity;
 using Xunit;
@@ -9,6 +11,31 @@ namespace CDriveSmartClean.Windows.IntegrationTests.Storage;
 [Collection("WindowsNativeTraversal")]
 public sealed class WindowsDirectoryEntryReaderTests
 {
+    [Fact]
+    public void NativeTestsRunInWindowsX64Process()
+    {
+        TestContext.Current.TestOutputHelper!.WriteLine($"OS architecture: {RuntimeInformation.OSArchitecture}; process architecture: {RuntimeInformation.ProcessArchitecture}");
+        Assert.True(OperatingSystem.IsWindows());
+        Assert.Equal(Architecture.X64, RuntimeInformation.ProcessArchitecture);
+    }
+
+    [Fact]
+    public void ProductionAssemblyPeMachineIsAmd64() =>
+        AssertAmd64(WindowsStorageFixture.ProductionType("WindowsDirectoryEntryReader").Assembly);
+
+    [Fact]
+    public void WindowsTestAssemblyPeMachineIsAmd64() =>
+        AssertAmd64(typeof(WindowsDirectoryEntryReaderTests).Assembly);
+
+    private static void AssertAmd64(Assembly assembly)
+    {
+        using var stream = File.OpenRead(assembly.Location);
+        using var pe = new PEReader(stream);
+        Machine actual = pe.PEHeaders.CoffHeader.Machine;
+        TestContext.Current.TestOutputHelper!.WriteLine($"Assembly: {assembly.Location}; PE Machine: {actual}");
+        Assert.Equal(Machine.Amd64, actual);
+    }
+
     internal static byte[] Record(string name, Guid id = default, uint attributes = 0, int? capacity = null)
     {
         var bytes = new byte[capacity ?? (88 + name.Length * 2)];
@@ -33,6 +60,8 @@ public sealed class WindowsDirectoryEntryReaderTests
         Type reader = WindowsStorageFixture.ProductionType("WindowsDirectoryEntryReader");
         Assert.Equal(88, reader.GetField("NameOffset", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
         Assert.Equal(65536, reader.GetField("BufferSize", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
+        Type fileId = reader.Assembly.GetType("CDriveSmartClean.Platform.Windows.Interop.Kernel32FileIdentityNative+FileId128", true)!;
+        Assert.Equal(16, Marshal.SizeOf(fileId));
     }
 
     [Fact]
