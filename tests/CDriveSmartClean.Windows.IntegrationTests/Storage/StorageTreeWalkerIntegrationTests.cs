@@ -8,6 +8,7 @@ using Xunit;
 
 namespace CDriveSmartClean.Windows.IntegrationTests.Storage;
 
+[Collection("WindowsNativeTraversal")]
 public sealed class StorageTreeWalkerIntegrationTests
 {
     [Fact]
@@ -25,10 +26,11 @@ public sealed class StorageTreeWalkerIntegrationTests
             File.WriteAllText(rootFile, "root");
             File.WriteAllText(level1File, "child");
             File.WriteAllText(level2File, "grandchild");
-            var volume = new SystemVolumeDescriptor(new VolumeIdentity(Guid.NewGuid()), root);
+            var binding = WindowsStorageFixture.Bind(root);
+            var volume = binding.Volume;
             var entries = new EntrySink();
             var issues = new IssueSink();
-            var walker = new StorageTreeWalker(new WindowsStorageEnumerator(), new StorageTraversalPolicy());
+            var walker = new StorageTreeWalker(binding.Enumerator, new StorageTraversalPolicy());
             await walker.WalkAsync(volume, entries, issues, TestContext.Current.CancellationToken);
 
             string[] expected = [level1, level2, rootFile, level1File, level2File];
@@ -37,6 +39,8 @@ public sealed class StorageTreeWalkerIntegrationTests
             Assert.All(entries.Entries, entry =>
             {
                 Assert.Same(volume.VolumeIdentity, entry.VolumeIdentity);
+                Assert.NotNull(entry.ObjectIdentity);
+                Assert.Equal(volume.VolumeIdentity, entry.ObjectIdentity.VolumeIdentity);
                 Assert.True(Path.IsPathFullyQualified(entry.CanonicalPath));
             });
             Assert.Empty(issues.Issues);

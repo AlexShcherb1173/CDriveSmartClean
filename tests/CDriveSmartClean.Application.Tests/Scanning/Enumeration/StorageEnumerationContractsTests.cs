@@ -17,7 +17,8 @@ public sealed class StorageEnumerationContractsTests
         {
             foreach (var reparse in Enum.GetValues<ReparseKind>())
             {
-                var entry = new StorageEntry(identity, "path", kind, reparse);
+                var entry = new StorageEntry(identity, null, "path", kind, reparse);
+                Assert.Null(entry.ObjectIdentity);
                 Assert.Same(identity, entry.VolumeIdentity);
                 Assert.Equal(kind, entry.ObjectKind);
                 Assert.Equal(reparse, entry.ReparseKind);
@@ -27,7 +28,7 @@ public sealed class StorageEnumerationContractsTests
 
     [Fact]
     public void NullVolumeIdentityRejected() =>
-        Assert.Throws<ArgumentNullException>("volumeIdentity", () => new StorageEntry(null!, "path", StorageObjectKind.File, ReparseKind.None));
+        Assert.Throws<ArgumentNullException>("volumeIdentity", () => new StorageEntry(null!, null, "path", StorageObjectKind.File, ReparseKind.None));
 
     [Fact]
     public void NullCanonicalPathRejected() =>
@@ -53,14 +54,14 @@ public sealed class StorageEnumerationContractsTests
     [InlineData(-1)]
     [InlineData(999)]
     public void InvalidStorageObjectKindRejected(int value) =>
-        Assert.Throws<ArgumentOutOfRangeException>("objectKind", () => new StorageEntry(Identity(), "path", (StorageObjectKind)value, ReparseKind.None));
+        Assert.Throws<ArgumentOutOfRangeException>("objectKind", () => new StorageEntry(Identity(), null, "path", (StorageObjectKind)value, ReparseKind.None));
 
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
     [InlineData(999)]
     public void InvalidReparseKindRejected(int value) =>
-        Assert.Throws<ArgumentOutOfRangeException>("reparseKind", () => new StorageEntry(Identity(), "path", StorageObjectKind.File, (ReparseKind)value));
+        Assert.Throws<ArgumentOutOfRangeException>("reparseKind", () => new StorageEntry(Identity(), null, "path", StorageObjectKind.File, (ReparseKind)value));
 
     [Fact]
     public void NonReparseEntryReportsFalse() => Assert.False(Entry("path").IsReparsePoint);
@@ -71,7 +72,7 @@ public sealed class StorageEnumerationContractsTests
     [InlineData(ReparseKind.MountPoint)]
     [InlineData(ReparseKind.Other)]
     public void ReparseEntryReportsTrue(ReparseKind kind) =>
-        Assert.True(new StorageEntry(Identity(), "path", StorageObjectKind.Directory, kind).IsReparsePoint);
+        Assert.True(new StorageEntry(Identity(), null, "path", StorageObjectKind.Directory, kind).IsReparsePoint);
 
     [Fact]
     public void StorageEntryPropertiesAreImmutable()
@@ -79,7 +80,7 @@ public sealed class StorageEnumerationContractsTests
         Assert.True(typeof(StorageEntry).IsSealed);
         var properties = typeof(StorageEntry).GetProperties();
         Assert.Equal(
-            ["CanonicalPath", "IsReparsePoint", "ObjectKind", "ReparseKind", "VolumeIdentity"],
+            ["CanonicalPath", "IsReparsePoint", "ObjectIdentity", "ObjectKind", "ReparseKind", "VolumeIdentity"],
             properties.Select(p => p.Name).Order(StringComparer.Ordinal));
         Assert.All(properties, p => Assert.False(p.CanWrite));
         Assert.Empty(typeof(StorageEntry).GetFields(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static));
@@ -137,18 +138,36 @@ public sealed class StorageEnumerationContractsTests
     public void ContractsExposeOnlyExactPortableTypes()
     {
         Assert.Equal(
-            [typeof(VolumeIdentity), typeof(string), typeof(StorageObjectKind), typeof(ReparseKind)],
+            [typeof(VolumeIdentity), typeof(StorageObjectIdentity), typeof(string), typeof(StorageObjectKind), typeof(ReparseKind)],
             Assert.Single(typeof(StorageEntry).GetConstructors()).GetParameters().Select(p => p.ParameterType));
         Assert.Equal(
-            [typeof(string), typeof(bool), typeof(StorageObjectKind), typeof(ReparseKind), typeof(VolumeIdentity)],
+            [typeof(string), typeof(bool), typeof(StorageObjectIdentity), typeof(StorageObjectKind), typeof(ReparseKind), typeof(VolumeIdentity)],
             typeof(StorageEntry).GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal).Select(p => p.PropertyType));
-        Assert.Equal(19, typeof(StorageEntry).Assembly.GetExportedTypes().Length);
+        Assert.Equal(20, typeof(StorageEntry).Assembly.GetExportedTypes().Length);
         Assert.Equal(14, typeof(VolumeIdentity).Assembly.GetExportedTypes().Length);
+    }
+
+    [Fact]
+    public void MatchingIdentityAccepted()
+    {
+        var volume = Identity();
+        var identity = new StorageObjectIdentity(Identity(), Guid.NewGuid());
+        var entry = new StorageEntry(volume, identity, "exact path", StorageObjectKind.File, ReparseKind.None);
+        Assert.Same(identity, entry.ObjectIdentity);
+        Assert.Equal("exact path", entry.CanonicalPath);
+    }
+
+    [Fact]
+    public void CrossVolumeIdentityRejected()
+    {
+        var foreign = new StorageObjectIdentity(new VolumeIdentity(Guid.NewGuid()), Guid.NewGuid());
+        Assert.Throws<ArgumentException>("objectIdentity", () =>
+            new StorageEntry(Identity(), foreign, "path", StorageObjectKind.Directory, ReparseKind.None));
     }
 
     private static VolumeIdentity Identity() => new(new Guid("336d3520-fd79-4b49-85df-2f41bf352376"));
 
-    private static StorageEntry Entry(string path) => new(Identity(), path, StorageObjectKind.File, ReparseKind.None);
+    private static StorageEntry Entry(string path) => new(Identity(), null, path, StorageObjectKind.File, ReparseKind.None);
 
     private static MethodInfo EnumeratorMethod() => typeof(IStorageEnumerator).GetMethod("EnumerateRootAsync")!;
 

@@ -9,8 +9,8 @@ public sealed class StorageTraversalContractsTests
     [Fact]
     public void StorageTraversalIssueKindExactValues()
     {
-        Assert.Equal(["Inaccessible", "Disappeared", "TargetChanged", "IoFailure"], Enum.GetNames<StorageTraversalIssueKind>());
-        Assert.Equal([1, 2, 3, 4], Enum.GetValues<StorageTraversalIssueKind>().Select(k => (int)k));
+        Assert.Equal(["Inaccessible", "Disappeared", "TargetChanged", "IoFailure", "IdentityUnavailable"], Enum.GetNames<StorageTraversalIssueKind>());
+        Assert.Equal([1, 2, 3, 4, 5], Enum.GetValues<StorageTraversalIssueKind>().Select(k => (int)k));
     }
 
     [Fact]

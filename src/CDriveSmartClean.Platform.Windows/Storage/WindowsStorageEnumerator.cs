@@ -1,7 +1,7 @@
 using System.Runtime.Versioning;
 using CDriveSmartClean.Application.Scanning.Enumeration;
+using CDriveSmartClean.Application.Scanning.Identity;
 using CDriveSmartClean.Application.Scanning.Observations;
-using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
 
 namespace CDriveSmartClean.Platform.Windows.Storage;
@@ -9,23 +9,31 @@ namespace CDriveSmartClean.Platform.Windows.Storage;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsStorageEnumerator : IStorageEnumerator
 {
+    private readonly WindowsStorageRootAnchor? fixtureAnchor;
+
+    public WindowsStorageEnumerator()
+    {
+    }
+
+    internal WindowsStorageEnumerator(WindowsStorageRootAnchor fixtureAnchor)
+    {
+        this.fixtureAnchor = fixtureAnchor;
+    }
+
     public async Task EnumerateRootAsync(
-        SystemVolumeDescriptor systemVolume,
-        IStorageEntrySink entrySink,
-        CancellationToken cancellationToken)
+        SystemVolumeDescriptor systemVolume, IStorageEntrySink entrySink, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(systemVolume);
         ArgumentNullException.ThrowIfNull(entrySink);
         cancellationToken.ThrowIfCancellationRequested();
-
-        await EnumerateDirectoryAsync(systemVolume, systemVolume.RootPath, entrySink, cancellationToken).ConfigureAwait(false);
+        var anchor = fixtureAnchor ?? WindowsStorageRootAnchor.Production(systemVolume);
+        using var chain = anchor.Open(systemVolume, cancellationToken);
+        await WindowsDirectoryEntryReader.ReadAsync(chain, systemVolume.RootPath, entrySink, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task EnumerateChildrenAsync(
-        SystemVolumeDescriptor systemVolume,
-        StorageEntry directory,
-        IStorageEntrySink entrySink,
-        CancellationToken cancellationToken)
+        SystemVolumeDescriptor systemVolume, StorageEntry directory,
+        IStorageEntrySink entrySink, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(systemVolume);
         ArgumentNullException.ThrowIfNull(directory);
@@ -41,60 +49,35 @@ public sealed class WindowsStorageEnumerator : IStorageEnumerator
             throw new ArgumentException("Only an ordinary non-reparse directory may be enumerated.", nameof(directory));
         }
 
-        string rootPath = Path.GetFullPath(systemVolume.RootPath);
-        string childPath = Path.GetFullPath(directory.CanonicalPath);
-        string relative = Path.GetRelativePath(rootPath, childPath);
-        if (relative == "." || relative == ".." || Path.IsPathRooted(relative) ||
-            relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
-            relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+        string prefix = systemVolume.RootPath.TrimEnd('\\') + "\\";
+        if (!directory.CanonicalPath.StartsWith(prefix, StringComparison.Ordinal) || directory.CanonicalPath.Length <= prefix.Length)
         {
-            throw new ArgumentException("Directory must be strictly within the system-volume root.", nameof(directory));
+            throw new ArgumentException("Directory must be strictly within the authorized root.", nameof(directory));
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
-        // Lexical scope and current attributes are not native object identity or a race-free guarantee.
-        FileAttributes attributes = File.GetAttributes(childPath);
-        if ((attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0)
+        string[] components = directory.CanonicalPath[prefix.Length..].Split('\\');
+        foreach (string component in components)
         {
-            throw new StorageTraversalTargetChangedException(directory.CanonicalPath);
-        }
-
-        await EnumerateDirectoryAsync(systemVolume, childPath, entrySink, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async Task EnumerateDirectoryAsync(
-        SystemVolumeDescriptor systemVolume,
-        string directoryPath,
-        IStorageEntrySink entrySink,
-        CancellationToken cancellationToken)
-    {
-        var options = new EnumerationOptions
-        {
-            RecurseSubdirectories = false,
-            IgnoreInaccessible = false,
-            ReturnSpecialDirectories = false,
-            AttributesToSkip = 0,
-        };
-        var root = new DirectoryInfo(directoryPath);
-        using var children = root.EnumerateFileSystemInfos("*", options).GetEnumerator();
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!children.MoveNext())
+            try
             {
-                break;
+                WindowsDirectoryHandleChain.ValidateComponent(component);
             }
-
-            FileSystemInfo child = children.Current;
-            FileAttributes attributes = child.Attributes;
-            var objectKind = (attributes & FileAttributes.Directory) != 0
-                ? StorageObjectKind.Directory
-                : StorageObjectKind.File;
-            var reparseKind = (attributes & FileAttributes.ReparsePoint) != 0
-                ? ReparseKind.Other
-                : ReparseKind.None;
-            var entry = new StorageEntry(systemVolume.VolumeIdentity, child.FullName, objectKind, reparseKind);
-            await entrySink.WriteAsync(entry, cancellationToken).ConfigureAwait(false);
+            catch (ArgumentException error)
+            {
+                throw new ArgumentException("Invalid directory component.", nameof(directory), error);
+            }
         }
+
+        if (directory.ObjectIdentity is null)
+        {
+            throw new StorageObjectIdentityUnavailableException(directory.CanonicalPath);
+        }
+
+        var anchor = fixtureAnchor ?? WindowsStorageRootAnchor.Production(systemVolume);
+        using var chain = anchor.Open(systemVolume, cancellationToken);
+        chain.Append(components, directory.CanonicalPath, cancellationToken);
+        chain.RequireExpected(directory.ObjectIdentity, directory.CanonicalPath);
+        // Same validated handle throughout. Contents stay live; this is not a filesystem snapshot.
+        await WindowsDirectoryEntryReader.ReadAsync(chain, directory.CanonicalPath, entrySink, cancellationToken).ConfigureAwait(false);
     }
 }

@@ -178,7 +178,7 @@ public sealed class StorageTraversalPolicyTests
     [InlineData(StorageObjectKind.Directory, ReparseKind.Other, TraversalDecision.ObserveOnly)]
     public void EntryPolicyPreservesFailClosedSemantics(StorageObjectKind kind, ReparseKind reparse, TraversalDecision expected)
     {
-        var entry = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), "path", kind, reparse);
+        var entry = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), null, "path", kind, reparse);
         Assert.Equal(expected, policy.Evaluate(entry));
     }
 
@@ -190,7 +190,7 @@ public sealed class StorageTraversalPolicyTests
             foreach (var reparse in Enum.GetValues<ReparseKind>())
             {
                 var observation = CreateObservation(kind, reparse);
-                var entry = new StorageEntry(observation.VolumeIdentity, observation.CanonicalPath, kind, reparse);
+                var entry = new StorageEntry(observation.VolumeIdentity, null, observation.CanonicalPath, kind, reparse);
                 Assert.Equal(policy.Evaluate(observation), policy.Evaluate(entry));
             }
         }
