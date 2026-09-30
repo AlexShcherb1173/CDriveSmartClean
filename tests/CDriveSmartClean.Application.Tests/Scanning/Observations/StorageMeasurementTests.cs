@@ -92,6 +92,84 @@ public sealed class StorageMeasurementTests
         Assert.Equal(["LivePointInTime", "Unknown"], Enum.GetNames<StorageMeasurementFreshness>());
     }
 
+    [Fact]
+    public void IdenticalAvailableValuesAreEqualWithEqualHashCodes()
+    {
+        StorageMeasurement first = Available(0, 0);
+        StorageMeasurement second = Available(0, 0);
+        StorageMeasurement third = Available(0, 0);
+
+        Assert.NotSame(first, second);
+        Assert.Equal(first, second);
+        Assert.True(first.Equals(second));
+        Assert.True(second.Equals(first));
+        Assert.True(second.Equals(third));
+        Assert.True(first.Equals(third));
+        Assert.Equal(first.GetHashCode(), second.GetHashCode());
+    }
+
+    [Fact]
+    public void IdenticalUnavailableValuesAreEqual() =>
+        Assert.Equal(StorageMeasurement.Unavailable(StorageMeasurementScope.DirectoryEntryMetadata),
+            StorageMeasurement.Unavailable(StorageMeasurementScope.DirectoryEntryMetadata));
+
+    [Fact]
+    public void IdenticalNotApplicableValuesAreEqual()
+    {
+        StorageMeasurement first = NonAvailable(StorageMeasurementAvailability.NotApplicable,
+            StorageMeasurementScope.ReparseEntryMetadata);
+        StorageMeasurement second = NonAvailable(StorageMeasurementAvailability.NotApplicable,
+            StorageMeasurementScope.ReparseEntryMetadata);
+
+        Assert.Equal(first, second);
+        Assert.Equal(first.GetHashCode(), second.GetHashCode());
+    }
+
+    [Fact]
+    public void EqualityHandlesReferenceNullAndUnrelatedType()
+    {
+        StorageMeasurement measurement = Available(1, 2);
+
+        Assert.True(measurement.Equals(measurement));
+        Assert.False(measurement.Equals(null));
+        Assert.False(measurement.Equals(new object()));
+    }
+
+    [Fact]
+    public void EveryIndependentlyVariableSemanticFieldParticipatesInEquality()
+    {
+        StorageMeasurement baseline = Available(10, 20, StorageMeasurementScope.FileContent);
+        Assert.NotEqual(baseline, Available(11, 20, StorageMeasurementScope.FileContent));
+        Assert.NotEqual(baseline, Available(10, 21, StorageMeasurementScope.FileContent));
+        Assert.NotEqual(baseline, Available(10, 20, StorageMeasurementScope.DirectoryEntryMetadata));
+
+        StorageMeasurement unavailable = NonAvailable(StorageMeasurementAvailability.Unavailable,
+            StorageMeasurementScope.FileContent);
+        StorageMeasurement notApplicable = NonAvailable(StorageMeasurementAvailability.NotApplicable,
+            StorageMeasurementScope.FileContent);
+        Assert.NotEqual(unavailable, notApplicable);
+
+        // Quality, source, and freshness are invariant-bound to availability. Comparing valid available and
+        // non-available states exercises those fields without constructing an invalid measurement.
+        Assert.NotEqual(baseline, unavailable);
+    }
+
+    [Theory]
+    [InlineData(nameof(StorageMeasurement.Quality))]
+    [InlineData(nameof(StorageMeasurement.Source))]
+    [InlineData(nameof(StorageMeasurement.Freshness))]
+    public void InvariantBoundMetadataDifferencesParticipateInEquality(string propertyName)
+    {
+        StorageMeasurement available = Available(10, 20);
+        StorageMeasurement unavailable = NonAvailable(StorageMeasurementAvailability.Unavailable,
+            StorageMeasurementScope.FileContent);
+
+        Assert.NotEqual(
+            typeof(StorageMeasurement).GetProperty(propertyName)!.GetValue(available),
+            typeof(StorageMeasurement).GetProperty(propertyName)!.GetValue(unavailable));
+        Assert.NotEqual(available, unavailable);
+    }
+
     private static StorageMeasurement Available(long logical, long allocated,
         StorageMeasurementScope scope = StorageMeasurementScope.FileContent) => Create(logical, allocated, scope);
 
@@ -101,4 +179,8 @@ public sealed class StorageMeasurementTests
         StorageMeasurementQuality.FileSystemReported,
         StorageMeasurementSource.WindowsFileIdExtendedDirectoryInfo, scope,
         StorageMeasurementFreshness.LivePointInTime);
+
+    private static StorageMeasurement NonAvailable(StorageMeasurementAvailability availability,
+        StorageMeasurementScope scope) => new(null, null, availability, StorageMeasurementQuality.Unknown,
+        StorageMeasurementSource.None, scope, StorageMeasurementFreshness.Unknown);
 }

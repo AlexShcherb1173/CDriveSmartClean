@@ -1,7 +1,7 @@
 namespace CDriveSmartClean.Application.Scanning.Observations;
 
 /// <summary>Raw per-entry filesystem measurement. Reported allocation is not exclusive or reclaimable space.</summary>
-public sealed class StorageMeasurement
+public sealed class StorageMeasurement : IEquatable<StorageMeasurement>
 {
     public StorageMeasurement(
         long? logicalBytes,
@@ -61,6 +61,22 @@ public sealed class StorageMeasurement
     public StorageMeasurementSource Source { get; }
     public StorageMeasurementScope Scope { get; }
     public StorageMeasurementFreshness Freshness { get; }
+
+    public bool Equals(StorageMeasurement? other) =>
+        ReferenceEquals(this, other) ||
+        other is not null &&
+        LogicalBytes == other.LogicalBytes &&
+        ReportedAllocatedBytes == other.ReportedAllocatedBytes &&
+        Availability == other.Availability &&
+        Quality == other.Quality &&
+        Source == other.Source &&
+        Scope == other.Scope &&
+        Freshness == other.Freshness;
+
+    public override bool Equals(object? obj) => obj is StorageMeasurement other && Equals(other);
+
+    public override int GetHashCode() => HashCode.Combine(
+        LogicalBytes, ReportedAllocatedBytes, Availability, Quality, Source, Scope, Freshness);
 
     public static StorageMeasurement Unavailable(StorageMeasurementScope scope) => new(
         null, null, StorageMeasurementAvailability.Unavailable, StorageMeasurementQuality.Unknown,

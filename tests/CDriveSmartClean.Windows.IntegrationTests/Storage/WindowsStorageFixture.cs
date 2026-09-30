@@ -13,6 +13,8 @@ namespace CDriveSmartClean.Windows.IntegrationTests.Storage;
 
 internal class WindowsStorageFixture : IDisposable
 {
+    private const uint FileFileCompression = 0x00000010;
+    private const uint GenericReadWrite = 0xC0000000;
     private readonly List<string> files = [];
     private readonly List<string> directories = [];
     private readonly List<string> junctions = [];
@@ -105,19 +107,35 @@ internal class WindowsStorageFixture : IDisposable
     internal bool TryAddCompressedFile(string relative, out string path, out int error)
     {
         path = AddEmptyFile(relative);
-        using (SafeFileHandle handle = Open(path, 0x40000000))
+        if (!SupportsFileCompression(path))
+        {
+            error = 0;
+            return false;
+        }
+
+        using (SafeFileHandle handle = Open(path, GenericReadWrite))
         {
             byte[] format = [1, 0]; // COMPRESSION_FORMAT_DEFAULT
             if (!DeviceIoControl(handle, 0x0009C040, format, (uint)format.Length, 0, 0, out _, 0))
             {
-                error = Marshal.GetLastPInvokeError();
-                return false;
+                throw new Win32Exception(Marshal.GetLastPInvokeError());
             }
         }
 
         File.WriteAllBytes(path, new byte[64 * 1024]);
         error = 0;
         return true;
+    }
+
+    private static bool SupportsFileCompression(string path)
+    {
+        string root = Path.GetPathRoot(Path.GetFullPath(path))!;
+        if (!GetVolumeInformationW(root, 0, 0, out _, out _, out uint flags, 0, 0))
+        {
+            throw new Win32Exception(Marshal.GetLastPInvokeError());
+        }
+
+        return (flags & FileFileCompression) != 0;
     }
 
     internal void AddHardLink(string relative, string existing)
@@ -294,6 +312,12 @@ internal class WindowsStorageFixture : IDisposable
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeviceIoControl(SafeFileHandle handle, uint code, byte[] data, uint length, nint output, uint size, out uint returned, nint overlapped);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeInformationW(string rootPathName, nint volumeNameBuffer,
+        uint volumeNameSize, out uint volumeSerialNumber, out uint maximumComponentLength,
+        out uint fileSystemFlags, nint fileSystemNameBuffer, uint fileSystemNameSize);
 }
 
 // Each chain pins shared ancestors (including Temp); concurrent fixture renames would test each other.

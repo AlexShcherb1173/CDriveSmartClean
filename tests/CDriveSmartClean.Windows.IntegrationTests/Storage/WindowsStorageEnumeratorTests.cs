@@ -465,7 +465,8 @@ public sealed class WindowsStorageEnumeratorTests
         using var fixture = new RootFixture();
         if (!fixture.TryAddCompressedFile("compressed.bin", out string path, out int error))
         {
-            Assert.Skip($"Disposable fixture filesystem does not support compression: {error}");
+            Assert.Equal(0, error);
+            Assert.Skip("Disposable fixture volume does not advertise FILE_FILE_COMPRESSION.");
         }
 
         StorageEntry entry = Assert.Single(await Observe(fixture), item => item.CanonicalPath == path);
