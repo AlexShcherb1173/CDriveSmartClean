@@ -136,8 +136,9 @@ public sealed class WindowsStorageTraversalSecurityTests
             Exception? error = await Record.ExceptionAsync(() => binding.Enumerator.EnumerateChildrenAsync(
                 binding.Volume, candidate, sink, TestContext.Current.CancellationToken));
             Assert.True(error is FileNotFoundException or DirectoryNotFoundException);
-            Assert.NotNull(error!.Data["NTSTATUS"]);
-            Assert.NotNull(error.Data["Win32Error"]);
+            Assert.Contains(candidatePath, error!.Message, StringComparison.Ordinal);
+            Assert.Null(error.Data["NTSTATUS"]); // Enumeration absence has no native-open status to preserve.
+            Assert.Null(error.Data["Win32Error"]);
             Assert.Empty(sink.Entries);
         }
         finally
@@ -254,7 +255,7 @@ public sealed class WindowsStorageTraversalSecurityTests
         SafeFileHandle[] acquired;
         using ((IDisposable)chain)
         {
-            Assert.Throws<FileNotFoundException>(() => WindowsStorageFixture.Invoke("WindowsDirectoryHandleChain", "Append", chain,
+            Assert.Throws<DirectoryNotFoundException>(() => WindowsStorageFixture.Invoke("WindowsDirectoryHandleChain", "Append", chain,
                 MissingComponent, f.Root, TestContext.Current.CancellationToken));
             acquired = [.. handles]; // Includes the successfully opened child before the later component failed.
             // Deterministic bound test: duplicate references, not additional native handles.
@@ -294,7 +295,7 @@ public sealed class WindowsStorageTraversalSecurityTests
             BindingFlags.Static | BindingFlags.NonPublic));
         Type native = typeof(CDriveSmartClean.Platform.Windows.Storage.WindowsStorageEnumerator).Assembly.GetType(
             "CDriveSmartClean.Platform.Windows.Interop.NtFileNative", true)!;
-        Assert.Equal(0x00200020u, native.GetField("OpenOptions", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
+        Assert.Equal(0x00600020u, native.GetField("OpenOptions", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
         foreach (var method in native.GetMethods(BindingFlags.Static | BindingFlags.NonPublic))
         {
             var import = method.GetCustomAttribute<System.Runtime.InteropServices.DllImportAttribute>();

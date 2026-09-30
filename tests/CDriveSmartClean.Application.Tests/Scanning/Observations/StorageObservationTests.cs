@@ -13,14 +13,15 @@ public sealed class StorageObservationTests
         var volume = new VolumeIdentity(Guid.NewGuid());
         var identity = new StorageObjectIdentity(volume, Guid.NewGuid());
         var target = new VolumeIdentity(Guid.NewGuid());
-        var observation = new StorageObservation(session, volume, identity, "/entry", StorageObjectKind.Directory, 12, 16, ReparseKind.Junction, target);
+        var observation = new StorageObservation(session, volume, identity, "/entry", StorageObjectKind.Directory,
+            Measurement(12, 16, StorageMeasurementScope.ReparseEntryMetadata), ReparseKind.Junction, target);
         Assert.Equal(session, observation.ScanSessionId);
         Assert.Same(volume, observation.VolumeIdentity);
         Assert.Same(identity, observation.ObjectIdentity);
         Assert.Equal("/entry", observation.CanonicalPath);
         Assert.Equal(StorageObjectKind.Directory, observation.ObjectKind);
-        Assert.Equal(12, observation.LogicalBytes);
-        Assert.Equal(16, observation.AllocatedBytes);
+        Assert.Equal(12, observation.Measurement.LogicalBytes);
+        Assert.Equal(16, observation.Measurement.ReportedAllocatedBytes);
         Assert.Equal(ReparseKind.Junction, observation.ReparseKind);
         Assert.Same(target, observation.ReparseTargetVolumeIdentity);
     }
@@ -34,7 +35,8 @@ public sealed class StorageObservationTests
     [Fact]
     public void NullVolumeRejected()
     {
-        Assert.Throws<ArgumentNullException>("volumeIdentity", () => new StorageObservation(Guid.NewGuid(), null!, null, "/entry", StorageObjectKind.File, 0, 0, ReparseKind.None, null));
+        Assert.Throws<ArgumentNullException>("volumeIdentity", () => new StorageObservation(Guid.NewGuid(), null!, null,
+            "/entry", StorageObjectKind.File, Measurement(0, 0), ReparseKind.None, null));
     }
 
     [Fact]
@@ -80,31 +82,31 @@ public sealed class StorageObservationTests
     [Fact]
     public void NegativeAllocatedBytesRejected()
     {
-        Assert.Throws<ArgumentOutOfRangeException>("allocatedBytes", () => Create(allocatedBytes: -1));
+        Assert.Throws<ArgumentOutOfRangeException>("reportedAllocatedBytes", () => Create(allocatedBytes: -1));
     }
 
     [Fact]
     public void ZeroSizesAccepted()
     {
         StorageObservation observation = Create();
-        Assert.Equal(0, observation.LogicalBytes);
-        Assert.Equal(0, observation.AllocatedBytes);
+        Assert.Equal(0, observation.Measurement.LogicalBytes);
+        Assert.Equal(0, observation.Measurement.ReportedAllocatedBytes);
     }
 
     [Fact]
     public void LogicalMayExceedAllocated()
     {
         StorageObservation observation = Create(logicalBytes: long.MaxValue, allocatedBytes: 1);
-        Assert.Equal(long.MaxValue, observation.LogicalBytes);
-        Assert.Equal(1, observation.AllocatedBytes);
+        Assert.Equal(long.MaxValue, observation.Measurement.LogicalBytes);
+        Assert.Equal(1, observation.Measurement.ReportedAllocatedBytes);
     }
 
     [Fact]
     public void AllocatedMayExceedLogical()
     {
         StorageObservation observation = Create(logicalBytes: 1, allocatedBytes: long.MaxValue);
-        Assert.Equal(1, observation.LogicalBytes);
-        Assert.Equal(long.MaxValue, observation.AllocatedBytes);
+        Assert.Equal(1, observation.Measurement.LogicalBytes);
+        Assert.Equal(long.MaxValue, observation.Measurement.ReportedAllocatedBytes);
     }
 
     [Fact]
@@ -206,7 +208,7 @@ public sealed class StorageObservationTests
     public void NoExclusiveAllocationOrAnalysisClaims()
     {
         Assert.Equal(
-            ["AllocatedBytes", "CanonicalPath", "IsReparsePoint", "LogicalBytes", "ObjectIdentity", "ObjectKind", "ReparseKind", "ReparseTargetVolumeIdentity", "ScanSessionId", "VolumeIdentity"],
+            ["CanonicalPath", "IsReparsePoint", "Measurement", "ObjectIdentity", "ObjectKind", "ReparseKind", "ReparseTargetVolumeIdentity", "ScanSessionId", "VolumeIdentity"],
             typeof(StorageObservation).GetProperties().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal));
     }
 
@@ -236,9 +238,19 @@ public sealed class StorageObservationTests
             objectIdentity,
             canonicalPath,
             objectKind,
-            logicalBytes,
-            allocatedBytes,
+            Measurement(logicalBytes, allocatedBytes, reparseKind != ReparseKind.None
+                ? StorageMeasurementScope.ReparseEntryMetadata
+                : objectKind == StorageObjectKind.Directory
+                    ? StorageMeasurementScope.DirectoryEntryMetadata
+                    : StorageMeasurementScope.FileContent),
             reparseKind,
             reparseTargetVolumeIdentity);
     }
+
+    private static StorageMeasurement Measurement(long logicalBytes, long allocatedBytes,
+        StorageMeasurementScope scope = StorageMeasurementScope.FileContent) => new(
+        logicalBytes, allocatedBytes, StorageMeasurementAvailability.Available,
+        StorageMeasurementQuality.FileSystemReported,
+        StorageMeasurementSource.WindowsFileIdExtendedDirectoryInfo, scope,
+        StorageMeasurementFreshness.LivePointInTime);
 }

@@ -892,6 +892,33 @@ Architecture v1 is accepted on these principles:
 9. verification after execution;
 10. modular monolith with inward dependency direction.
 
+## 35. F1-12 raw storage measurement boundary
+
+The Windows x64 enumerator records `EndOfFile` as logical bytes and `AllocationSize` as filesystem-reported
+allocation from the same `FILE_ID_EXTD_DIR_INFO` observation. Values are signed, nonnegative, point-in-time
+metadata. Unavailable values remain null under an explicit availability state; zero always means a measured zero.
+Directory measurements describe the directory entry, not recursive subtree usage. Reparse measurements describe
+the entry, not its target. Reported allocation is not exclusive, unique, reclaimable, or reconciled volume usage;
+F1-13 owns hard-link/shared-allocation accounting and aggregation.
+
+Portable attributes are mapped through source-specific paths. Directory enumeration may report
+`RecallOnOpen`; `FileAttributeTagInfo` may not, because its numerically equal `0x00040000` bit has EA semantics.
+The two sources therefore never share a generic raw-bit mapper.
+
+Before every relative descendant open, the adapter freshly enumerates the requested literal component from its
+validated pinned parent handle. It requires an ordinary non-reparse directory, a native ID, and no known
+recall-sensitive enumeration state. The component is then opened relative to that same parent with existing-only,
+no-follow and `FILE_OPEN_NO_RECALL` options. Handle-visible attributes, identity, volume serial and GUID-volume
+provenance are validated before the new handle becomes an enumeration parent. Caller-provided `StorageEntry`
+metadata is data, not traversal authority.
+
+Known recall-sensitive directories remain visible and produce explicit incomplete-coverage issues. Fresh lookup
+adds native enumeration work and is deliberately uncached. The filesystem remains live: a state change between
+lookup and open is possible, and `RecallOnOpen` cannot be revalidated through the approved handle query.
+`FILE_OPEN_NO_RECALL` is an acquisition mitigation, not evidence of zero provider callbacks, network traffic,
+metadata hydration, or provider-independent behavior. Real provider, ReFS, and cross-volume integration evidence
+remain separate requirements.
+
 ---
 
 This document is the technical baseline for implementation and must remain consistent with `BUSINESS_LOGIC_V1_1.md` and `SECURITY_MODEL_V1.md`.

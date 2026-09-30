@@ -688,6 +688,28 @@ Security Model v1 is satisfied when:
 13. destructive integration/security tests use disposable storage fixtures;
 14. release CI includes security gates.
 
+## 37. F1-12 measurement and cloud-traversal controls
+
+F1-12 reads native directory metadata without reading file content. It preserves unavailable measurements rather
+than converting them to zero and never treats logical or reported allocation as reclaimable space.
+
+Traversal authorization is established inside the Windows adapter. Each descendant component is freshly found
+through its validated parent handle, rejected when trusted enumeration reports Offline, RecallOnOpen,
+RecallOnDataAccess, or Unpinned, and then opened as one literal parent-relative component. The acquired handle is
+checked for directory type, reparse state, handle-visible recall states, native identity, volume serial and
+GUID-volume provenance before use. A caller-created `StorageEntry`, path, identity, or attribute set cannot alone
+authorize traversal. Recall-sensitive entries remain visible and generate an explicit coverage gap.
+
+Attribute meanings are tied to their native information class. In particular, enumeration-only RecallOnOpen and
+the handle-visible/internal EA bit share `0x00040000` but are not interchangeable. The handle query never maps that
+bit to RecallOnOpen.
+
+Relative opens use `FILE_OPEN_NO_RECALL` in addition to the existing no-follow and synchronous options. This asks
+applicable offline or virtualization filters not to recall content because of the open. It does not guarantee zero
+provider callbacks, network access, metadata hydration, or universal non-hydration. Fresh enumeration and handle
+validation do not form an atomic filesystem snapshot; RecallOnOpen may change in the lookup-to-open interval.
+Stronger provider claims require isolated disposable-provider integration tests.
+
 ---
 
 This security model is mandatory for implementation. Any architecture or feature that violates these invariants requires an explicit Architecture Decision Record and security review before adoption.

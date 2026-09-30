@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security;
+using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Identity;
 using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Domain.Storage;
@@ -28,7 +29,7 @@ internal static class WindowsStorageObjectIdentityReader
         return info;
     }
 
-    internal static void RequireOrdinaryDirectory(SafeFileHandle handle, string path)
+    internal static StorageEntryAttributes RequireOrdinaryDirectory(SafeFileHandle handle, string path)
     {
         if (!Kernel32FileIdentityNative.GetAttributeTagInfo(handle,
             Kernel32FileIdentityNative.FileInfoByHandleClass.FileAttributeTagInfo, out var attributes,
@@ -37,10 +38,21 @@ internal static class WindowsStorageObjectIdentityReader
             throw NativeFailure(Marshal.GetLastPInvokeError(), path);
         }
 
-        if ((attributes.FileAttributes & 0x410) != 0x10)
+        if ((attributes.FileAttributes &
+             (WindowsStorageAttributeMapper.DirectoryTypeBit | WindowsStorageAttributeMapper.ReparseBit)) !=
+            WindowsStorageAttributeMapper.DirectoryTypeBit)
         {
             throw new StorageTraversalTargetChangedException(path);
         }
+
+        StorageEntryAttributes mapped =
+            WindowsStorageAttributeMapper.FromHandleAttributeTag(attributes.FileAttributes);
+        if (StorageEntryAttributePolicy.IsRecallSensitive(mapped))
+        {
+            throw new StorageRecallSensitiveException(path);
+        }
+
+        return mapped;
     }
 
     internal static string ReadGuidPath(SafeFileHandle handle, string path)

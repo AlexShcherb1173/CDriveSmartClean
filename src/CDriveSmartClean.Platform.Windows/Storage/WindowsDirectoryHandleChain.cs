@@ -79,6 +79,9 @@ internal sealed class WindowsDirectoryHandleChain : IDisposable
                 throw new IOException("Native directory chain exceeds 256 relative components.");
             }
 
+            WindowsDirectoryEntryReader.NativeEntry evidence =
+                WindowsDirectoryEntryReader.FindChild(this, component, path, token);
+            token.ThrowIfCancellationRequested();
             var next = OpenRelative(Handle, component, path);
             handles.Add(next); // Own unvalidated handles too, for partial-chain disposal.
             token.ThrowIfCancellationRequested();
@@ -88,7 +91,13 @@ internal sealed class WindowsDirectoryHandleChain : IDisposable
             token.ThrowIfCancellationRequested();
             string actual = WindowsStorageObjectIdentityReader.ReadGuidPath(next, path);
             WindowsStorageObjectIdentityReader.ValidateProvenance(volumeRoot, actual, serial, info.VolumeSerialNumber);
-            Identity = RequireIdentity(info.FileId.ToOpaqueGuid(), path);
+            StorageObjectIdentity identity = RequireIdentity(info.FileId.ToOpaqueGuid(), path);
+            if (identity.ObjectId != evidence.Id)
+            {
+                throw new StorageTraversalTargetChangedException(path);
+            }
+
+            Identity = identity;
         }
     }
 

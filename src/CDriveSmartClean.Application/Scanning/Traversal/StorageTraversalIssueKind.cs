@@ -7,4 +7,5 @@ public enum StorageTraversalIssueKind
     TargetChanged = 3,
     IoFailure = 4,
     IdentityUnavailable = 5,
+    RecallSensitive = 6,
 }

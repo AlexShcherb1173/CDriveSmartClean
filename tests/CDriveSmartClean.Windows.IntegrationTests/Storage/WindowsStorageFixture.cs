@@ -72,6 +72,54 @@ internal class WindowsStorageFixture : IDisposable
         return path;
     }
 
+    internal string AddEmptyFile(string relative)
+    {
+        string path = Owned(relative);
+        File.WriteAllBytes(path, []);
+        files.Add(path);
+        return path;
+    }
+
+    internal bool TryAddSparseFile(string relative, out string path, out int error)
+    {
+        path = AddEmptyFile(relative);
+        using (SafeFileHandle handle = Open(path, 0x40000000))
+        {
+            if (!DeviceIoControl(handle, 0x000900C4, [], 0, 0, 0, out _, 0))
+            {
+                error = Marshal.GetLastPInvokeError();
+                return false;
+            }
+        }
+
+        using (var stream = new FileStream(path, FileMode.Open, FileAccess.Write,
+                   FileShare.ReadWrite | FileShare.Delete))
+        {
+            stream.SetLength(1024 * 1024);
+        }
+
+        error = 0;
+        return true;
+    }
+
+    internal bool TryAddCompressedFile(string relative, out string path, out int error)
+    {
+        path = AddEmptyFile(relative);
+        using (SafeFileHandle handle = Open(path, 0x40000000))
+        {
+            byte[] format = [1, 0]; // COMPRESSION_FORMAT_DEFAULT
+            if (!DeviceIoControl(handle, 0x0009C040, format, (uint)format.Length, 0, 0, out _, 0))
+            {
+                error = Marshal.GetLastPInvokeError();
+                return false;
+            }
+        }
+
+        File.WriteAllBytes(path, new byte[64 * 1024]);
+        error = 0;
+        return true;
+    }
+
     internal void AddHardLink(string relative, string existing)
     {
         string path = Owned(relative);

@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Identity;
 using CDriveSmartClean.Application.Scanning.Observations;
+using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
 
 namespace CDriveSmartClean.Platform.Windows.Storage;
@@ -47,6 +48,11 @@ public sealed class WindowsStorageEnumerator : IStorageEnumerator
         if (directory.ObjectKind != StorageObjectKind.Directory || directory.ReparseKind != ReparseKind.None)
         {
             throw new ArgumentException("Only an ordinary non-reparse directory may be enumerated.", nameof(directory));
+        }
+
+        if (StorageEntryAttributePolicy.IsRecallSensitive(directory.Attributes))
+        {
+            throw new StorageRecallSensitiveException(directory.CanonicalPath);
         }
 
         string prefix = systemVolume.RootPath.TrimEnd('\\') + "\\";

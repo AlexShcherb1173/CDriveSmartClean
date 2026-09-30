@@ -48,12 +48,31 @@ public sealed class StorageTreeWalkerTests
     }
 
     [Theory]
+    [InlineData(StorageEntryAttributes.Offline)]
+    [InlineData(StorageEntryAttributes.RecallOnOpen)]
+    [InlineData(StorageEntryAttributes.RecallOnDataAccess)]
+    [InlineData(StorageEntryAttributes.Unpinned)]
+    public async Task RecallSensitiveDirectoryIsVisibleAndReportsCoverage(StorageEntryAttributes attributes)
+    {
+        var h = new Harness();
+        StorageEntry entry = h.Entry("cloud", StorageObjectKind.Directory, attributes: attributes);
+        h.Enumerator.Root = [entry];
+        await h.Walk(TestContext.Current.CancellationToken);
+        Assert.Same(entry, Assert.Single(h.Entries.Values));
+        Assert.Empty(h.Enumerator.ChildCalls);
+        StorageTraversalIssue issue = Assert.Single(h.Issues.Values);
+        Assert.Equal(StorageTraversalIssueKind.RecallSensitive, issue.Kind);
+        Assert.Equal("cloud", issue.CanonicalPath);
+    }
+
+    [Theory]
     [InlineData(0, StorageTraversalIssueKind.Inaccessible)]
     [InlineData(1, StorageTraversalIssueKind.Disappeared)]
     [InlineData(2, StorageTraversalIssueKind.Disappeared)]
     [InlineData(3, StorageTraversalIssueKind.TargetChanged)]
     [InlineData(4, StorageTraversalIssueKind.IoFailure)]
     [InlineData(5, StorageTraversalIssueKind.IdentityUnavailable)]
+    [InlineData(6, StorageTraversalIssueKind.RecallSensitive)]
     public async Task ChildFailuresReportExactlyOneIssueAndContinuePendingSiblings(int failure, StorageTraversalIssueKind kind)
     {
         var h = new Harness();
@@ -513,6 +532,7 @@ public sealed class StorageTreeWalkerTests
         2 => new FileNotFoundException("enumerator"),
         3 => new StorageTraversalTargetChangedException("bad"),
         5 => new StorageObjectIdentityUnavailableException("bad"),
+        6 => new StorageRecallSensitiveException("bad"),
         _ => new IOException("enumerator"),
     };
 
@@ -528,8 +548,14 @@ public sealed class StorageTreeWalkerTests
 
         public Harness() => Walker = new StorageTreeWalker(Enumerator, new StorageTraversalPolicy());
 
-        public StorageEntry Entry(string path, StorageObjectKind kind = StorageObjectKind.File, ReparseKind reparse = ReparseKind.None) =>
-            new(Volume.VolumeIdentity, new StorageObjectIdentity(Volume.VolumeIdentity, Guid.NewGuid()), path, kind, reparse);
+        public StorageEntry Entry(string path, StorageObjectKind kind = StorageObjectKind.File,
+            ReparseKind reparse = ReparseKind.None, StorageEntryAttributes attributes = StorageEntryAttributes.None) =>
+            new(Volume.VolumeIdentity, new StorageObjectIdentity(Volume.VolumeIdentity, Guid.NewGuid()), path, kind, reparse,
+                StorageMeasurement.Unavailable(reparse != ReparseKind.None
+                    ? StorageMeasurementScope.ReparseEntryMetadata
+                    : kind == StorageObjectKind.Directory
+                        ? StorageMeasurementScope.DirectoryEntryMetadata
+                        : StorageMeasurementScope.FileContent), attributes);
 
         public Task Walk(CancellationToken cancellationToken = default) => Walker.WalkAsync(Volume, Entries, Issues, cancellationToken);
     }

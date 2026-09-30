@@ -11,6 +11,23 @@ public sealed class StorageEntry
         string canonicalPath,
         StorageObjectKind objectKind,
         ReparseKind reparseKind)
+        : this(volumeIdentity, objectIdentity, canonicalPath, objectKind, reparseKind,
+            StorageMeasurement.Unavailable(reparseKind != ReparseKind.None
+                ? StorageMeasurementScope.ReparseEntryMetadata
+                : objectKind == StorageObjectKind.Directory
+                    ? StorageMeasurementScope.DirectoryEntryMetadata
+                    : StorageMeasurementScope.FileContent), StorageEntryAttributes.None)
+    {
+    }
+
+    public StorageEntry(
+        VolumeIdentity volumeIdentity,
+        StorageObjectIdentity? objectIdentity,
+        string canonicalPath,
+        StorageObjectKind objectKind,
+        ReparseKind reparseKind,
+        StorageMeasurement measurement,
+        StorageEntryAttributes attributes)
     {
         ArgumentNullException.ThrowIfNull(volumeIdentity);
         if (objectIdentity is not null && !objectIdentity.VolumeIdentity.Equals(volumeIdentity))
@@ -28,11 +45,15 @@ public sealed class StorageEntry
             throw new ArgumentOutOfRangeException(nameof(reparseKind));
         }
 
+        ArgumentNullException.ThrowIfNull(measurement);
+
         VolumeIdentity = volumeIdentity;
         ObjectIdentity = objectIdentity;
         CanonicalPath = canonicalPath;
         ObjectKind = objectKind;
         ReparseKind = reparseKind;
+        Measurement = measurement;
+        Attributes = attributes;
     }
 
     public VolumeIdentity VolumeIdentity { get; }
@@ -45,6 +66,10 @@ public sealed class StorageEntry
     public StorageObjectKind ObjectKind { get; }
 
     public ReparseKind ReparseKind { get; }
+
+    public StorageMeasurement Measurement { get; }
+
+    public StorageEntryAttributes Attributes { get; }
 
     public bool IsReparsePoint => ReparseKind != ReparseKind.None;
 }

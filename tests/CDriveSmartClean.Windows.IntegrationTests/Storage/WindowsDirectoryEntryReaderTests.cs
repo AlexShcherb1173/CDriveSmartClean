@@ -36,9 +36,12 @@ public sealed class WindowsDirectoryEntryReaderTests
         Assert.Equal(Machine.Amd64, actual);
     }
 
-    internal static byte[] Record(string name, Guid id = default, uint attributes = 0, int? capacity = null)
+    internal static byte[] Record(string name, Guid id = default, uint attributes = 0, int? capacity = null,
+        long endOfFile = 0, long allocationSize = 0)
     {
         var bytes = new byte[capacity ?? (88 + name.Length * 2)];
+        BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(40), endOfFile);
+        BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(48), allocationSize);
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(56), attributes);
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(60), checked((uint)name.Length * 2));
         id.ToByteArray().CopyTo(bytes, 72);
@@ -59,10 +62,33 @@ public sealed class WindowsDirectoryEntryReaderTests
         WindowsStorageFixture.Invoke("WindowsDirectoryEntryReader", "VerifyLayout", null);
         Type reader = WindowsStorageFixture.ProductionType("WindowsDirectoryEntryReader");
         Assert.Equal(88, reader.GetField("NameOffset", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
+        Assert.Equal(40, reader.GetField("EndOfFileOffset", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
+        Assert.Equal(48, reader.GetField("AllocationSizeOffset", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
         Assert.Equal(65536, reader.GetField("BufferSize", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue());
         Type fileId = reader.Assembly.GetType("CDriveSmartClean.Platform.Windows.Interop.Kernel32FileIdentityNative+FileId128", true)!;
         Assert.Equal(16, Marshal.SizeOf(fileId));
     }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 4096)]
+    [InlineData(8192, 1)]
+    [InlineData(long.MaxValue, long.MaxValue)]
+    public void SignedNativeSizesArePreserved(long logical, long allocated)
+    {
+        object entry = Assert.Single(Parse(Record("sized", endOfFile: logical,
+            allocationSize: allocated)).Cast<object>());
+        Assert.Equal(logical, Property(entry, "EndOfFile"));
+        Assert.Equal(allocated, Property(entry, "AllocationSize"));
+    }
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(0, -1)]
+    [InlineData(long.MinValue, 0)]
+    public void NegativeNativeSizesAreMalformed(long logical, long allocated) =>
+        Assert.Throws<IOException>(() => Parse(Record("negative", endOfFile: logical,
+            allocationSize: allocated)));
 
     [Fact]
     public void Utf16CodeUnitsAndAll128IdentityBitsArePreserved()

@@ -11,8 +11,7 @@ public sealed class StorageObservation
         StorageObjectIdentity? objectIdentity,
         string canonicalPath,
         StorageObjectKind objectKind,
-        long logicalBytes,
-        long allocatedBytes,
+        StorageMeasurement measurement,
         ReparseKind reparseKind,
         VolumeIdentity? reparseTargetVolumeIdentity)
     {
@@ -33,8 +32,7 @@ public sealed class StorageObservation
             throw new ArgumentOutOfRangeException(nameof(objectKind));
         }
 
-        ArgumentOutOfRangeException.ThrowIfNegative(logicalBytes);
-        ArgumentOutOfRangeException.ThrowIfNegative(allocatedBytes);
+        ArgumentNullException.ThrowIfNull(measurement);
         if (!Enum.IsDefined(reparseKind))
         {
             throw new ArgumentOutOfRangeException(nameof(reparseKind));
@@ -50,8 +48,7 @@ public sealed class StorageObservation
         ObjectIdentity = objectIdentity;
         CanonicalPath = canonicalPath;
         ObjectKind = objectKind;
-        LogicalBytes = logicalBytes;
-        AllocatedBytes = allocatedBytes;
+        Measurement = measurement;
         ReparseKind = reparseKind;
         ReparseTargetVolumeIdentity = reparseTargetVolumeIdentity;
     }
@@ -67,9 +64,7 @@ public sealed class StorageObservation
 
     public StorageObjectKind ObjectKind { get; }
 
-    public long LogicalBytes { get; }
-
-    public long AllocatedBytes { get; }
+    public StorageMeasurement Measurement { get; }
 
     public ReparseKind ReparseKind { get; }
 
