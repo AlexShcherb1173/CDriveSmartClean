@@ -13,7 +13,7 @@ public sealed class StorageTraversalPolicy
     {
         ArgumentNullException.ThrowIfNull(observation);
 
-        return EvaluateKinds(observation.ObjectKind, observation.ReparseKind);
+        return EvaluateKinds(observation.ObjectKind, observation.ReparseKind, StorageEntryAttributes.None);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
@@ -22,11 +22,13 @@ public sealed class StorageTraversalPolicy
     public TraversalDecision Evaluate(StorageEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        return EvaluateKinds(entry.ObjectKind, entry.ReparseKind);
+        return EvaluateKinds(entry.ObjectKind, entry.ReparseKind, entry.Attributes);
     }
 
-    private static TraversalDecision EvaluateKinds(StorageObjectKind objectKind, ReparseKind reparseKind) =>
-        objectKind == StorageObjectKind.Directory && reparseKind == ReparseKind.None
+    private static TraversalDecision EvaluateKinds(StorageObjectKind objectKind, ReparseKind reparseKind,
+        StorageEntryAttributes attributes) =>
+        objectKind == StorageObjectKind.Directory && reparseKind == ReparseKind.None &&
+        !StorageEntryAttributePolicy.IsRecallSensitive(attributes)
             ? TraversalDecision.TraverseChildren
             : TraversalDecision.ObserveOnly;
 }

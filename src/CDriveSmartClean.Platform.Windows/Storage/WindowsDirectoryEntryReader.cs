@@ -1,7 +1,9 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using CDriveSmartClean.Application.Scanning.Enumeration;
+using CDriveSmartClean.Application.Scanning.Identity;
 using CDriveSmartClean.Application.Scanning.Observations;
+using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Platform.Windows.Interop;
 
 namespace CDriveSmartClean.Platform.Windows.Storage;
@@ -10,6 +12,8 @@ internal static class WindowsDirectoryEntryReader
 {
     internal const int BufferSize = 65536;
     internal const int NameOffset = 88;
+    internal const int EndOfFileOffset = 40;
+    internal const int AllocationSizeOffset = 48;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct DirectoryLayout
@@ -30,13 +34,16 @@ internal static class WindowsDirectoryEntryReader
         internal ushort FirstChar;
     }
 
-    internal sealed record NativeEntry(string Name, uint Attributes, uint Tag, Guid Id);
+    internal sealed record NativeEntry(
+        string Name, long EndOfFile, long AllocationSize, uint Attributes, uint Tag, Guid Id);
 
     internal static void VerifyLayout()
     {
         if (RuntimeInformation.ProcessArchitecture != Architecture.X64 ||
             Marshal.SizeOf<DirectoryLayout>() != 96 ||
             Marshal.OffsetOf<DirectoryLayout>(nameof(DirectoryLayout.Next)) != 0 ||
+            Marshal.OffsetOf<DirectoryLayout>(nameof(DirectoryLayout.End)) != EndOfFileOffset ||
+            Marshal.OffsetOf<DirectoryLayout>(nameof(DirectoryLayout.Allocation)) != AllocationSizeOffset ||
             Marshal.OffsetOf<DirectoryLayout>(nameof(DirectoryLayout.Attributes)) != 56 ||
             Marshal.OffsetOf<DirectoryLayout>(nameof(DirectoryLayout.NameLength)) != 60 ||
             Marshal.OffsetOf<DirectoryLayout>(nameof(DirectoryLayout.Tag)) != 68 ||
@@ -119,9 +126,21 @@ internal static class WindowsDirectoryEntryReader
                 token.ThrowIfCancellationRequested();
                 string child = path.TrimEnd('\\') + "\\" + native.Name;
                 var id = native.Id == Guid.Empty ? null : WindowsStorageObjectIdentityReader.FromVerifiedDirectory(chain, native.Id, child);
-                var entry = new StorageEntry(chain.VolumeIdentity, id, child,
-                    (native.Attributes & 0x10) != 0 ? StorageObjectKind.Directory : StorageObjectKind.File,
-                    (native.Attributes & 0x400) != 0 ? ReparseKind.Other : ReparseKind.None);
+                StorageObjectKind kind = (native.Attributes & WindowsStorageAttributeMapper.DirectoryTypeBit) != 0
+                    ? StorageObjectKind.Directory : StorageObjectKind.File;
+                ReparseKind reparse = (native.Attributes & WindowsStorageAttributeMapper.ReparseBit) != 0
+                    ? ReparseKind.Other : ReparseKind.None;
+                StorageMeasurementScope scope = reparse != ReparseKind.None
+                    ? StorageMeasurementScope.ReparseEntryMetadata
+                    : kind == StorageObjectKind.Directory
+                        ? StorageMeasurementScope.DirectoryEntryMetadata
+                        : StorageMeasurementScope.FileContent;
+                var measurement = new StorageMeasurement(native.EndOfFile, native.AllocationSize,
+                    StorageMeasurementAvailability.Available, StorageMeasurementQuality.FileSystemReported,
+                    StorageMeasurementSource.WindowsFileIdExtendedDirectoryInfo, scope,
+                    StorageMeasurementFreshness.LivePointInTime);
+                var entry = new StorageEntry(chain.VolumeIdentity, id, child, kind, reparse, measurement,
+                    WindowsStorageAttributeMapper.FromDirectoryEnumeration(native.Attributes));
                 await sink.WriteAsync(entry, token).ConfigureAwait(false);
                 token.ThrowIfCancellationRequested();
             }
@@ -176,7 +195,15 @@ internal static class WindowsDirectoryEntryReader
                     throw new IOException("Invalid native component.", error);
                 }
 
-                entries.Add(new(name, BinaryPrimitives.ReadUInt32LittleEndian(record[56..]),
+                long endOfFile = BinaryPrimitives.ReadInt64LittleEndian(record[EndOfFileOffset..]);
+                long allocationSize = BinaryPrimitives.ReadInt64LittleEndian(record[AllocationSizeOffset..]);
+                if (endOfFile < 0 || allocationSize < 0)
+                {
+                    throw new IOException("Native directory record contains a negative size.");
+                }
+
+                entries.Add(new(name, endOfFile, allocationSize,
+                    BinaryPrimitives.ReadUInt32LittleEndian(record[56..]),
                     BinaryPrimitives.ReadUInt32LittleEndian(record[68..]), new Guid(record.Slice(72, 16))));
             }
 
@@ -186,6 +213,75 @@ internal static class WindowsDirectoryEntryReader
             }
 
             offset = checked(offset + (int)next);
+        }
+    }
+
+    internal static NativeEntry FindChild(
+        WindowsDirectoryHandleChain chain, string component, string path, CancellationToken token)
+    {
+        VerifyLayout();
+        nint buffer = Marshal.AllocHGlobal(BufferSize);
+        try
+        {
+            NativeEntry? match = null;
+            bool first = true;
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                bool success = Kernel32FileIdentityNative.GetDirectoryInfo(chain.Handle,
+                    first ? Kernel32FileIdentityNative.FileInfoByHandleClass.FileIdExtdDirectoryRestartInfo :
+                        Kernel32FileIdentityNative.FileInfoByHandleClass.FileIdExtdDirectoryInfo, buffer, BufferSize);
+                int error = Marshal.GetLastPInvokeError();
+                first = false;
+                if (!AcceptResult(success, error, path))
+                {
+                    break;
+                }
+
+                var batch = new byte[BufferSize];
+                Marshal.Copy(buffer, batch, 0, batch.Length);
+                foreach (NativeEntry candidate in ParseBatch(batch))
+                {
+                    if (!string.Equals(candidate.Name, component, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (match is not null)
+                    {
+                        throw new IOException("Native directory enumeration returned an ambiguous exact match.");
+                    }
+
+                    match = candidate;
+                }
+            }
+
+            if (match is null)
+            {
+                throw new DirectoryNotFoundException("Native child was not found: " + path);
+            }
+
+            if ((match.Attributes & WindowsStorageAttributeMapper.DirectoryTypeBit) == 0 ||
+                (match.Attributes & WindowsStorageAttributeMapper.ReparseBit) != 0)
+            {
+                throw new StorageTraversalTargetChangedException(path);
+            }
+
+            if (match.Id == Guid.Empty)
+            {
+                throw new StorageObjectIdentityUnavailableException(path);
+            }
+
+            if ((match.Attributes & WindowsStorageAttributeMapper.EnumerationRecallBlockMask) != 0)
+            {
+                throw new StorageRecallSensitiveException(path);
+            }
+
+            return match;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
         }
     }
 }

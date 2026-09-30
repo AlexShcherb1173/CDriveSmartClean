@@ -1,6 +1,7 @@
 using System.Runtime.ExceptionServices;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Identity;
+using CDriveSmartClean.Application.Scanning.Observations;
 using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
 using CDriveSmartClean.Domain.Storage;
@@ -64,6 +65,10 @@ public sealed class StorageTreeWalker
                 {
                     issueKind = StorageTraversalIssueKind.IdentityUnavailable;
                 }
+                catch (StorageRecallSensitiveException)
+                {
+                    issueKind = StorageTraversalIssueKind.RecallSensitive;
+                }
                 catch (IOException)
                 {
                     issueKind = StorageTraversalIssueKind.IoFailure;
@@ -123,6 +128,25 @@ public sealed class StorageTreeWalker
             traversalToken.ThrowIfCancellationRequested();
             if (policy.Evaluate(entry) != TraversalDecision.TraverseChildren)
             {
+                if (entry.ObjectKind == StorageObjectKind.Directory && entry.ReparseKind == ReparseKind.None &&
+                    StorageEntryAttributePolicy.IsRecallSensitive(entry.Attributes))
+                {
+                    var issue = new StorageTraversalIssue(systemVolume.VolumeIdentity, entry.CanonicalPath,
+                        StorageTraversalIssueKind.RecallSensitive);
+                    try
+                    {
+                        await issueSink.WriteAsync(issue, traversalToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception)
+                    {
+                        throw new DownstreamSinkFailureException(exception);
+                    }
+                }
+
                 return;
             }
 

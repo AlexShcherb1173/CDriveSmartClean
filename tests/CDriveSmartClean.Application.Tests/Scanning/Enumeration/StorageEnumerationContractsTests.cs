@@ -80,7 +80,7 @@ public sealed class StorageEnumerationContractsTests
         Assert.True(typeof(StorageEntry).IsSealed);
         var properties = typeof(StorageEntry).GetProperties();
         Assert.Equal(
-            ["CanonicalPath", "IsReparsePoint", "ObjectIdentity", "ObjectKind", "ReparseKind", "VolumeIdentity"],
+            ["Attributes", "CanonicalPath", "IsReparsePoint", "Measurement", "ObjectIdentity", "ObjectKind", "ReparseKind", "VolumeIdentity"],
             properties.Select(p => p.Name).Order(StringComparer.Ordinal));
         Assert.All(properties, p => Assert.False(p.CanWrite));
         Assert.Empty(typeof(StorageEntry).GetFields(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static));
@@ -138,12 +138,15 @@ public sealed class StorageEnumerationContractsTests
     public void ContractsExposeOnlyExactPortableTypes()
     {
         Assert.Equal(
-            [typeof(VolumeIdentity), typeof(StorageObjectIdentity), typeof(string), typeof(StorageObjectKind), typeof(ReparseKind)],
-            Assert.Single(typeof(StorageEntry).GetConstructors()).GetParameters().Select(p => p.ParameterType));
+            [typeof(VolumeIdentity), typeof(StorageObjectIdentity), typeof(string), typeof(StorageObjectKind), typeof(ReparseKind),
+                typeof(StorageMeasurement), typeof(StorageEntryAttributes)],
+            Assert.Single(typeof(StorageEntry).GetConstructors(), constructor => constructor.GetParameters().Length == 7)
+                .GetParameters().Select(p => p.ParameterType));
         Assert.Equal(
-            [typeof(string), typeof(bool), typeof(StorageObjectIdentity), typeof(StorageObjectKind), typeof(ReparseKind), typeof(VolumeIdentity)],
+            [typeof(StorageEntryAttributes), typeof(string), typeof(bool), typeof(StorageMeasurement), typeof(StorageObjectIdentity),
+                typeof(StorageObjectKind), typeof(ReparseKind), typeof(VolumeIdentity)],
             typeof(StorageEntry).GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal).Select(p => p.PropertyType));
-        Assert.Equal(20, typeof(StorageEntry).Assembly.GetExportedTypes().Length);
+        Assert.Equal(29, typeof(StorageEntry).Assembly.GetExportedTypes().Length);
         Assert.Equal(14, typeof(VolumeIdentity).Assembly.GetExportedTypes().Length);
     }
 

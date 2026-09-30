@@ -24,6 +24,30 @@ public sealed class StorageTraversalPolicyTests
         Assert.Equal(TraversalDecision.TraverseChildren, policy.Evaluate(observation));
     }
 
+    [Theory]
+    [InlineData(StorageEntryAttributes.Offline)]
+    [InlineData(StorageEntryAttributes.RecallOnOpen)]
+    [InlineData(StorageEntryAttributes.RecallOnDataAccess)]
+    [InlineData(StorageEntryAttributes.Unpinned)]
+    [InlineData(StorageEntryAttributes.Pinned | StorageEntryAttributes.Unpinned)]
+    public void RecallSensitiveDirectoryIsObserveOnly(StorageEntryAttributes attributes)
+    {
+        var entry = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), null, "path",
+            StorageObjectKind.Directory, ReparseKind.None,
+            StorageMeasurement.Unavailable(StorageMeasurementScope.DirectoryEntryMetadata), attributes);
+        Assert.Equal(TraversalDecision.ObserveOnly, policy.Evaluate(entry));
+    }
+
+    [Fact]
+    public void PinnedDirectoryRemainsEligible()
+    {
+        var entry = new StorageEntry(new VolumeIdentity(Guid.NewGuid()), null, "path",
+            StorageObjectKind.Directory, ReparseKind.None,
+            StorageMeasurement.Unavailable(StorageMeasurementScope.DirectoryEntryMetadata),
+            StorageEntryAttributes.Pinned);
+        Assert.Equal(TraversalDecision.TraverseChildren, policy.Evaluate(entry));
+    }
+
     [Fact]
     public void OrdinaryFileIsObserveOnly()
     {
@@ -209,8 +233,13 @@ public sealed class StorageTraversalPolicyTests
             objectIdentity: null,
             canonicalPath,
             objectKind,
-            logicalBytes: 0,
-            allocatedBytes: 0,
+            new StorageMeasurement(0, 0, StorageMeasurementAvailability.Available,
+                StorageMeasurementQuality.FileSystemReported,
+                StorageMeasurementSource.WindowsFileIdExtendedDirectoryInfo,
+                reparseKind != ReparseKind.None ? StorageMeasurementScope.ReparseEntryMetadata :
+                    objectKind == StorageObjectKind.Directory ? StorageMeasurementScope.DirectoryEntryMetadata :
+                    StorageMeasurementScope.FileContent,
+                StorageMeasurementFreshness.LivePointInTime),
             reparseKind,
             reparseTargetVolumeIdentity);
     }

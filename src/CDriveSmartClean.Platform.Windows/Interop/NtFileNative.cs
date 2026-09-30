@@ -5,7 +5,7 @@ namespace CDriveSmartClean.Platform.Windows.Interop;
 
 internal static class NtFileNative
 {
-    internal const uint OpenOptions = 0x00200020; // OPEN_REPARSE_POINT | SYNCHRONOUS_IO_NONALERT
+    internal const uint OpenOptions = 0x00600020; // NO_RECALL | OPEN_REPARSE_POINT | SYNCHRONOUS_IO_NONALERT
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct UnicodeString

@@ -32,6 +32,11 @@ public sealed class WindowsStorageEnumeratorTests
             Assert.True(Path.IsPathFullyQualified(entry.CanonicalPath));
             Assert.True(Enum.IsDefined(entry.ObjectKind));
             Assert.True(Enum.IsDefined(entry.ReparseKind));
+            Assert.Equal(StorageMeasurementAvailability.Available, entry.Measurement.Availability);
+            Assert.Equal(StorageMeasurementQuality.FileSystemReported, entry.Measurement.Quality);
+            Assert.Equal(StorageMeasurementSource.WindowsFileIdExtendedDirectoryInfo, entry.Measurement.Source);
+            Assert.NotNull(entry.Measurement.LogicalBytes);
+            Assert.NotNull(entry.Measurement.ReportedAllocatedBytes);
             AssertDirectChild(volume.RootPath, entry.CanonicalPath);
             FileAttributes attributes;
             try
@@ -72,6 +77,10 @@ public sealed class WindowsStorageEnumeratorTests
         });
         Assert.Equal(StorageObjectKind.Directory, Assert.Single(sink.Entries, e => e.CanonicalPath == fixture.Child).ObjectKind);
         Assert.Equal(StorageObjectKind.File, Assert.Single(sink.Entries, e => e.CanonicalPath == fixture.Hidden).ObjectKind);
+        Assert.Equal(StorageMeasurementScope.DirectoryEntryMetadata,
+            Assert.Single(sink.Entries, e => e.CanonicalPath == fixture.Child).Measurement.Scope);
+        Assert.Equal(StorageMeasurementScope.FileContent,
+            Assert.Single(sink.Entries, e => e.CanonicalPath == fixture.Ordinary).Measurement.Scope);
         Assert.DoesNotContain(sink.Entries, e => e.CanonicalPath == fixture.Grandchild);
     }
 
@@ -240,6 +249,24 @@ public sealed class WindowsStorageEnumeratorTests
         AssertDirectChild(fixture.Child, entry.CanonicalPath);
     }
 
+    [Theory]
+    [InlineData(StorageEntryAttributes.Offline)]
+    [InlineData(StorageEntryAttributes.RecallOnOpen)]
+    [InlineData(StorageEntryAttributes.RecallOnDataAccess)]
+    [InlineData(StorageEntryAttributes.Unpinned)]
+    public async Task CallerReportedRecallStateIsRejectedBeforeDescent(StorageEntryAttributes attributes)
+    {
+        using var fixture = new RootFixture();
+        StorageEntry trustedShape = Candidate(fixture);
+        var supplied = new StorageEntry(trustedShape.VolumeIdentity, trustedShape.ObjectIdentity,
+            trustedShape.CanonicalPath, StorageObjectKind.Directory, ReparseKind.None,
+            StorageMeasurement.Unavailable(StorageMeasurementScope.DirectoryEntryMetadata), attributes);
+        var sink = new CollectingSink();
+        await Assert.ThrowsAsync<StorageRecallSensitiveException>(() =>
+            fixture.Enumerator.EnumerateChildrenAsync(fixture.Volume, supplied, sink, CancellationToken.None));
+        Assert.Empty(sink.Entries);
+    }
+
     [Fact]
     public async Task TargetChangedFromDirectoryToFileIsRejected()
     {
@@ -398,11 +425,54 @@ public sealed class WindowsStorageEnumeratorTests
             Assert.NotNull(alias.ObjectIdentity);
             Assert.Equal(original.ObjectIdentity, alias.ObjectIdentity);
             Assert.NotEqual(original.CanonicalPath, alias.CanonicalPath);
+            Assert.Equal(original.Measurement.LogicalBytes, alias.Measurement.LogicalBytes);
+            Assert.Equal(original.Measurement.ReportedAllocatedBytes, alias.Measurement.ReportedAllocatedBytes);
         }
         finally
         {
             File.Delete(link);
         }
+    }
+
+    [Fact]
+    public async Task EmptyFileHasMeasuredZeroLogicalSize()
+    {
+        using var fixture = new RootFixture();
+        string path = fixture.AddEmptyFile("empty.bin");
+        StorageEntry entry = Assert.Single(await Observe(fixture), item => item.CanonicalPath == path);
+        Assert.Equal(0, entry.Measurement.LogicalBytes);
+        Assert.Equal(StorageMeasurementAvailability.Available, entry.Measurement.Availability);
+    }
+
+    [Fact]
+    public async Task SparseFilePreservesNativeSizeAndAttributeEvidence()
+    {
+        using var fixture = new RootFixture();
+        if (!fixture.TryAddSparseFile("sparse.bin", out string path, out int error))
+        {
+            Assert.Skip($"Disposable fixture filesystem does not support sparse files: {error}");
+        }
+
+        StorageEntry entry = Assert.Single(await Observe(fixture), item => item.CanonicalPath == path);
+        Assert.Equal(1024 * 1024, entry.Measurement.LogicalBytes);
+        Assert.True((entry.Attributes & StorageEntryAttributes.Sparse) != 0);
+        Assert.NotNull(entry.Measurement.ReportedAllocatedBytes);
+    }
+
+    [Fact]
+    public async Task CompressedFilePreservesNativeSizeAndAttributeEvidence()
+    {
+        using var fixture = new RootFixture();
+        if (!fixture.TryAddCompressedFile("compressed.bin", out string path, out int error))
+        {
+            Assert.Equal(0, error);
+            Assert.Skip("Disposable fixture volume does not advertise FILE_FILE_COMPRESSION.");
+        }
+
+        StorageEntry entry = Assert.Single(await Observe(fixture), item => item.CanonicalPath == path);
+        Assert.Equal(64 * 1024, entry.Measurement.LogicalBytes);
+        Assert.True((entry.Attributes & StorageEntryAttributes.Compressed) != 0);
+        Assert.NotNull(entry.Measurement.ReportedAllocatedBytes);
     }
 
     [Fact]
