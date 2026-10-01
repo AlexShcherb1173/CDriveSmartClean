@@ -21,7 +21,7 @@ public sealed class WindowsSystemVolumeProviderTests
             .Where(method => (method.Attributes & MethodAttributes.PinvokeImpl) != 0)
             .ToArray();
         Assert.Equal(
-            ["GetSystemWindowsDirectoryW", "GetVolumeNameForVolumeMountPointW", "GetVolumePathNameW"],
+            ["GetDiskSpaceInformationW", "GetSystemWindowsDirectoryW", "GetVolumeNameForVolumeMountPointW", "GetVolumePathNameW"],
             nativeMethods.Select(method => method.Name).Order(StringComparer.Ordinal));
         Assert.Null(interopType.GetMethod("GetWindowsDirectoryW", flags));
 

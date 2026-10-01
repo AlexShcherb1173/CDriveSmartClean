@@ -921,4 +921,60 @@ remain separate requirements.
 
 ---
 
+## 36. F1-13 observed storage accounting
+
+The accounting engine composes the unchanged tree walker with a compact per-call identity/path ledger.
+It forwards every discovered entry and traversal issue. It does not open files, read content, enumerate
+streams, classify findings, estimate reclaim, or populate legacy SizeMetrics/VolumeAccounting.
+
+DeduplicatedObservedAllocatedBytes counts filesystem-reported allocation once per eligible observed
+volume-bound native identity. This is observed identity aliasing, not exclusive allocation, physical
+block deduplication, or device consumption. An identity seen once does not prove that no unseen links exist.
+Repeated identical paths are idempotent. Contradictory path evidence invalidates every affected identity;
+contradictory identity evidence invalidates that group. No first/last/min/max measurement wins.
+
+Raw logical and reported-allocation subtotals are distinct-path diagnostics. Available but ineligible
+measurements form an uncertain measured subtotal, which must not be added to deduplicated allocation.
+Unavailable/not-applicable measurements have counts, not invented byte estimates. Conflicted paths are
+excluded from numeric path and kind counts because their evidence is ambiguous.
+
+The hierarchy uses a synthetic root, ordinal case-preserving root-relative paths, and no Unicode
+normalization. Implicit parents are not observed directories. Every eligible identity is attributed once
+to its aliases' containing directories' lowest common ancestor (LCA). Parent direct allocation plus
+child inclusive allocation is additive; parent and child inclusive totals overlap. Group counts and
+extra-alias counts are also attributed once at the LCA; unique counts mean non-conflicted identities.
+Final collections are sorted. Finalization uses an ancestor index and iterative bottom-up reduction,
+not a recursive or per-file ancestor-summing walk.
+
+Accounting quality is Complete, Incomplete, Inconsistent, or Unavailable, with combinable reasons.
+Complete means processing of the supported evidence model, not complete physical-volume coverage.
+All arithmetic is checked. Identity/path/directory limits and a deterministic conservative estimated
+state budget guard accounting allocations; this budget is not an exact managed-heap measurement.
+Defaults are 1,000,000 identities, 1,000,000 paths, 100,000 hierarchy nodes including the synthetic root,
+and 512 MiB estimated state. Charges include retained names, collection overhead and finalization buffers.
+ResourceLimit or ArithmeticOverflow releases authoritative state and produces null accounting totals
+and no prefix hierarchy/groups. Safe traversal, entry forwarding and issue forwarding continue.
+Security violations, cancellation and downstream failures still propagate normally.
+
+WindowsVolumeSpaceProvider authoritatively rediscovers the system volume, checks the caller descriptor,
+then queries its volume GUID root through GetDiskSpaceInformationW. This read-only API requires Windows
+10 build 17763 / Server 2019 or later. Unsupported APIs return an explicit unavailable snapshot; there is
+no drive-letter or GetDiskFreeSpaceEx fallback. Actual total/available allocation units produce capacity/free;
+used is capacity minus free. Caller quota values and native used/reserve diagnostics remain separate.
+Unsigned products must fit Int64. Reserve diagnostics are not disjoint accounting buckets.
+
+Start/end snapshots are live samples. Equal samples do not prove an atomic scan. A nonzero used-space
+delta makes reconciliation inconsistent and coverage unavailable. The signed residual is end used minus
+eligible observed allocation; negative values remain negative. Positive residuals are unattributed,
+never automatically filesystem-reserved. Stable observed coverage is eligible allocation / sampled used,
+with explicit incomplete quality for evidence gaps. It is never clamped to 100%. Empty-volume coverage
+requires completed, available, gap-free accounting; unavailable samples never become zero snapshots.
+
+Directory entry allocation (including omitted root metadata), reparse entry allocation, and known provider
+attributes Offline/RecallOnOpen/RecallOnDataAccess/Pinned/Unpinned are excluded from the numerator while
+raw evidence stays visible. Ordinary sparse/compressed files retain their exact reported allocation.
+No cloud hydration is added. ADS completeness, distinct-identity block sharing, NTFS Dedup, ReFS cloning,
+WOF internals, and filesystem-reserved attribution remain unsupported. Real cloud-provider, ReFS,
+cross-volume, native ARM64 and native x86 integration remain unverified.
+
 This document is the technical baseline for implementation and must remain consistent with `BUSINESS_LOGIC_V1_1.md` and `SECURITY_MODEL_V1.md`.
