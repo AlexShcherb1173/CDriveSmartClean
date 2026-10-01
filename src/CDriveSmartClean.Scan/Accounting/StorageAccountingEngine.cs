@@ -12,8 +12,15 @@ public sealed class StorageAccountingEngine
     private readonly StorageTreeWalker walker;
     private readonly IVolumeSpaceProvider volumeProvider;
     private readonly StorageAccountingOptions options;
+    private readonly IReadOnlyDictionary<StorageTraversalIssueKind, long>? initialIssueCounts;
 
     public StorageAccountingEngine(StorageTreeWalker walker, IVolumeSpaceProvider volumeProvider, StorageAccountingOptions options)
+        : this(walker, volumeProvider, options, null)
+    {
+    }
+
+    private StorageAccountingEngine(StorageTreeWalker walker, IVolumeSpaceProvider volumeProvider, StorageAccountingOptions options,
+        IReadOnlyDictionary<StorageTraversalIssueKind, long>? initialIssueCounts)
     {
         ArgumentNullException.ThrowIfNull(walker);
         ArgumentNullException.ThrowIfNull(volumeProvider);
@@ -21,6 +28,7 @@ public sealed class StorageAccountingEngine
         this.walker = walker;
         this.volumeProvider = volumeProvider;
         this.options = options;
+        this.initialIssueCounts = initialIssueCounts;
     }
 
     public async Task<StorageAccountingResult> AccountAsync(SystemVolumeDescriptor systemVolume,
@@ -31,7 +39,7 @@ public sealed class StorageAccountingEngine
         ArgumentNullException.ThrowIfNull(downstreamIssueSink);
         cancellationToken.ThrowIfCancellationRequested();
         VolumeSpaceSnapshot start = Snapshot(systemVolume);
-        var session = new Session(systemVolume, downstreamEntrySink, downstreamIssueSink, options);
+        var session = new Session(systemVolume, downstreamEntrySink, downstreamIssueSink, options, initialIssueCounts);
         try
         {
             await walker.WalkAsync(systemVolume, session, session, cancellationToken).ConfigureAwait(false);
@@ -64,14 +72,23 @@ public sealed class StorageAccountingEngine
         private readonly IStorageTraversalIssueSink issueSink;
         private StorageIdentityLedger? ledger;
         internal AccountingReason Reasons { get; private set; }
-        internal Dictionary<StorageTraversalIssueKind, long> Issues { get; } =
-            Enum.GetValues<StorageTraversalIssueKind>().ToDictionary(kind => kind, _ => 0L);
+        internal Dictionary<StorageTraversalIssueKind, long> Issues { get; }
 
-        internal Session(SystemVolumeDescriptor volume, IStorageEntrySink entrySink, IStorageTraversalIssueSink issueSink, StorageAccountingOptions options)
+        internal Session(SystemVolumeDescriptor volume, IStorageEntrySink entrySink, IStorageTraversalIssueSink issueSink,
+            StorageAccountingOptions options, IReadOnlyDictionary<StorageTraversalIssueKind, long>? initialIssueCounts)
         {
             this.volume = volume;
             this.entrySink = entrySink;
             this.issueSink = issueSink;
+            Issues = Enum.GetValues<StorageTraversalIssueKind>().ToDictionary(kind => kind, _ => 0L);
+            if (initialIssueCounts is not null)
+            {
+                foreach ((StorageTraversalIssueKind kind, long count) in initialIssueCounts)
+                {
+                    if (!Issues.ContainsKey(kind) || count < 0) throw new ArgumentOutOfRangeException(nameof(initialIssueCounts));
+                    Issues[kind] = count;
+                }
+            }
             try { ledger = new StorageIdentityLedger(options); }
             catch (StorageIdentityLedger.ResourceLimitException) { Disable(AccountingReason.ResourceLimit); }
             catch (OverflowException) { Disable(AccountingReason.ArithmeticOverflow); }
@@ -97,7 +114,8 @@ public sealed class StorageAccountingEngine
             cancellationToken.ThrowIfCancellationRequested();
             if (!issue.VolumeIdentity.Equals(volume.VolumeIdentity)) throw new InvalidOperationException("Cross-volume issue.");
             StorageHierarchyAccumulator.ValidatePath(volume, issue.CanonicalPath);
-            Issues[issue.Kind] = checked(Issues[issue.Kind] + 1);
+            try { Issues[issue.Kind] = checked(Issues[issue.Kind] + 1); }
+            catch (OverflowException) { Disable(AccountingReason.ArithmeticOverflow); }
             Reasons |= AccountingReason.TraversalCoverageGap;
             await issueSink.WriteAsync(issue, cancellationToken).ConfigureAwait(false);
         }

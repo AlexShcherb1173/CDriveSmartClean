@@ -78,8 +78,43 @@ public sealed class StorageAccountingEngineTests
         var result = await h.Run();
         Assert.Equal(2, h.Forwarded.Count);
         Assert.True(result.TraversalCompleted);
+        Assert.Equal(2, h.Snapshots);
+        Assert.Null(result.Root);
+        Assert.Empty(result.AllocationGroups);
         Assert.Null(result.Summary.DeduplicatedObservedAllocatedBytes);
+        Assert.Null(result.Reconciliation.SignedResidualBytes);
+        Assert.Null(result.Reconciliation.ObservedCoveragePercent);
         Assert.True(result.Summary.Reasons.HasFlag(AccountingReason.ArithmeticOverflow));
+    }
+
+    [Fact]
+    public async Task IssueCountOverflowDegradesAccountingAndContinuesForwarding()
+    {
+        var h = new AccountingHarness();
+        h.Entries =
+        [
+            h.Entry("first", null, kind: StorageObjectKind.Directory),
+            h.Entry("after", h.Id()),
+            h.Entry("second", null, kind: StorageObjectKind.Directory),
+        ];
+
+        var result = await h.Run(issueCountSeed:
+            new KeyValuePair<StorageTraversalIssueKind, long>(StorageTraversalIssueKind.IdentityUnavailable, long.MaxValue));
+
+        Assert.True(result.TraversalCompleted);
+        Assert.Equal(3, h.Forwarded.Count);
+        Assert.Equal(2, h.ForwardedIssues.Count);
+        Assert.Equal(2, h.Snapshots);
+        Assert.True(result.Summary.Reasons.HasFlag(AccountingReason.ArithmeticOverflow));
+        Assert.True(result.Summary.Reasons.HasFlag(AccountingReason.TraversalCoverageGap));
+        Assert.Equal(AccountingQuality.Unavailable, result.Summary.Quality);
+        Assert.Null(result.Root);
+        Assert.Empty(result.AllocationGroups);
+        Assert.Null(result.Summary.DeduplicatedObservedAllocatedBytes);
+        Assert.Null(result.Summary.UncertainMeasuredAllocatedBytes);
+        Assert.Null(result.Reconciliation.SignedResidualBytes);
+        Assert.Null(result.Reconciliation.ObservedCoveragePercent);
+        Assert.Equal(long.MaxValue, result.IssueCounts[StorageTraversalIssueKind.IdentityUnavailable]);
     }
 
     [Theory]

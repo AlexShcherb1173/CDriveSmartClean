@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Enumeration;
@@ -109,6 +110,91 @@ public sealed class StorageIdentityLedgerTests
         }
     }
 
+    [Fact]
+    public async Task NullAndIdentifiedEvidencePoisonPathInEitherOrder()
+    {
+        var h = new AccountingHarness();
+        var identity = h.Id();
+        StorageEntry unidentified = h.Entry("same", null);
+        StorageEntry identified = h.Entry("same", identity);
+        string? expected = null;
+
+        foreach (StorageEntry[] entries in new[] { new[] { unidentified, identified }, new[] { identified, unidentified } })
+        {
+            h.Entries = entries;
+            StorageAccountingResult result = await h.Run();
+            AssertPoisonedPath(result, [identity]);
+            Assert.Equal(0, result.Root!.Aggregate.RawReportedAllocatedBytes);
+            Assert.Equal(0, result.Summary.UncertainMeasuredAllocatedBytes);
+            string json = JsonSerializer.Serialize(result);
+            expected ??= json;
+            Assert.Equal(expected, json);
+        }
+    }
+
+    [Fact]
+    public async Task ReturningToFirstIdentityDoesNotRehabilitatePoisonedPath()
+    {
+        var h = new AccountingHarness();
+        var a = h.Id();
+        var b = h.Id();
+        StorageEntry first = h.Entry("same", a);
+        StorageEntry second = h.Entry("same", b);
+        StorageEntry[][] orders = [[first, second, first], [first, first, second], [second, first, first]];
+        string? expected = null;
+
+        foreach (StorageEntry[] entries in orders)
+        {
+            h.Entries = entries;
+            StorageAccountingResult result = await h.Run();
+            AssertPoisonedPath(result, [a, b]);
+            Assert.Equal(0, result.Root!.Aggregate.RawReportedAllocatedBytes);
+            Assert.Equal(0, result.Summary.UncertainMeasuredAllocatedBytes);
+            string json = JsonSerializer.Serialize(result);
+            expected ??= json;
+            Assert.Equal(expected, json);
+        }
+    }
+
+    [Fact]
+    public async Task ThreeIdentitiesAtOnePathArePoisonedInEveryOrder()
+    {
+        var h = new AccountingHarness();
+        StorageObjectIdentity[] identities = [h.Id(), h.Id(), h.Id()];
+        StorageEntry[] observations = identities.Select(identity => h.Entry("same", identity)).ToArray();
+        int[][] permutations = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+        string? expected = null;
+
+        foreach (int[] permutation in permutations)
+        {
+            h.Entries = permutation.Select(index => observations[index]).ToArray();
+            StorageAccountingResult result = await h.Run();
+            AssertPoisonedPath(result, identities);
+            Assert.Equal(0, result.Root!.Aggregate.RawReportedAllocatedBytes);
+            Assert.Equal(0, result.Summary.UncertainMeasuredAllocatedBytes);
+            string json = JsonSerializer.Serialize(result);
+            expected ??= json;
+            Assert.Equal(expected, json);
+        }
+    }
+
+    private static void AssertPoisonedPath(StorageAccountingResult result, StorageObjectIdentity[] identities)
+    {
+        Assert.Equal(0, result.Summary.DeduplicatedObservedAllocatedBytes);
+        Assert.Equal(identities.Length, result.Summary.ConflictedIdentityCount);
+        Assert.True(result.Summary.Reasons.HasFlag(AccountingReason.ConflictingPathEvidence));
+        Assert.Equal(identities.Length, result.AllocationGroups.Count);
+        foreach (StorageObjectIdentity identity in identities)
+        {
+            AllocationGroup group = Assert.Single(result.AllocationGroups, candidate => candidate.Identity.Equals(identity));
+            Assert.Single(group.Paths);
+            Assert.Equal("same", group.Paths[0]);
+            Assert.True(group.IsConflicted);
+            Assert.True(group.Reasons.HasFlag(AccountingReason.ConflictingPathEvidence));
+            Assert.Null(group.EligibleReportedAllocatedBytes);
+        }
+    }
+
     [Theory]
     [InlineData(StorageEntryAttributes.Sparse, true)]
     [InlineData(StorageEntryAttributes.Compressed, true)]
@@ -197,13 +283,27 @@ internal sealed class AccountingHarness : IStorageEnumerator, IStorageEntrySink,
                 StorageMeasurementSource.None, scope, StorageMeasurementFreshness.Unknown);
         return new StorageEntry(Volume.VolumeIdentity, id, Volume.RootPath + relative, kind, reparse, measurement, attributes);
     }
-    internal Task<StorageAccountingResult> Run(StorageAccountingOptions? options = null, CancellationToken? token = null)
+    internal Task<StorageAccountingResult> Run(StorageAccountingOptions? options = null, CancellationToken? token = null,
+        KeyValuePair<StorageTraversalIssueKind, long>? issueCountSeed = null)
     {
         Snapshots = 0;
         Forwarded.Clear();
         ForwardedIssues.Clear();
-        return new StorageAccountingEngine(new StorageTreeWalker(this, new StorageTraversalPolicy()), this, options ?? new())
-            .AccountAsync(Volume, this, this, token ?? TestContext.Current.CancellationToken);
+        var walker = new StorageTreeWalker(this, new StorageTraversalPolicy());
+        StorageAccountingOptions actualOptions = options ?? new();
+        StorageAccountingEngine engine = issueCountSeed is null
+            ? new StorageAccountingEngine(walker, this, actualOptions)
+            : CreateSeededEngine(walker, actualOptions, issueCountSeed.Value);
+        return engine.AccountAsync(Volume, this, this, token ?? TestContext.Current.CancellationToken);
+    }
+    private StorageAccountingEngine CreateSeededEngine(StorageTreeWalker walker, StorageAccountingOptions options,
+        KeyValuePair<StorageTraversalIssueKind, long> seed)
+    {
+        ConstructorInfo constructor = typeof(StorageAccountingEngine).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic,
+            null, [typeof(StorageTreeWalker), typeof(IVolumeSpaceProvider), typeof(StorageAccountingOptions),
+                typeof(IReadOnlyDictionary<StorageTraversalIssueKind, long>)], null)!;
+        var counts = new Dictionary<StorageTraversalIssueKind, long> { [seed.Key] = seed.Value };
+        return (StorageAccountingEngine)constructor.Invoke([walker, this, options, counts]);
     }
     public async Task EnumerateRootAsync(SystemVolumeDescriptor systemVolume, IStorageEntrySink sink, CancellationToken token)
     {
