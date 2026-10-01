@@ -357,7 +357,7 @@ public sealed class StorageTreeWalkerTests
     {
         var type = typeof(StorageTreeWalker);
         Assert.True(type.IsSealed);
-        Assert.Equal(3, type.Assembly.GetExportedTypes().Length);
+        Assert.Equal(4, type.Assembly.GetExportedTypes().Length);
         Assert.Equal([typeof(IStorageEnumerator), typeof(StorageTraversalPolicy)],
             Assert.Single(type.GetConstructors()).GetParameters().Select(p => p.ParameterType));
         var method = Assert.Single(type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly));
