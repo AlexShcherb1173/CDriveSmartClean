@@ -977,4 +977,82 @@ No cloud hydration is added. ADS completeness, distinct-identity block sharing, 
 WOF internals, and filesystem-reserved attribution remain unsupported. Real cloud-provider, ReFS,
 cross-volume, native ARM64 and native x86 integration remain unverified.
 
+---
+
+## 37. F1-14 deterministic universal analysis
+
+`CDriveSmartClean.Analysis` consumes the same validated `StorageEntry` stream forwarded by
+`StorageAccountingEngine`. A per-scan `IStorageAnalysisSession` captures compact path and identity facts and
+joins them with the completed F1-13 result. Analysis never rescans, reopens a path, reads content, follows a
+reparse target, or becomes a filesystem authority. Domain remains independent; Analysis references Application
+and Domain and has no Windows dependency.
+
+F1-14 produces an immutable staged `StorageAnalysisResult`, not final `Finding` objects.
+`Finding`, `SizeMetrics`, `ReclaimEstimate`, `RiskAssessment`, and protection policy remain deferred.
+In particular, analysis does not invent exclusive allocation, reclaimable bytes, risk, cleanup permission, or
+zero values for unavailable measurements.
+
+Primary classification uses fixed deterministic rules with explicit authority and specificity. Equal strongest
+rules that disagree produce `Unknown`; rule registration and scan order never select a winner. Implemented
+primary categories are Unknown, System, Application, ApplicationData, and UserData. Temporary, Cache,
+LogDiagnostic, InstallerArchive, BackupSnapshot, VirtualStorage, CloudBacked, RecycleBin, and
+FilesystemOverhead remain deferred. Implemented entry-derived facets are Compressed, Sparse, CloudPlaceholder,
+and observed-identity HardLinked. Large, timestamp, growth, duplicate, orphan, ownership, active/protected, and
+purpose-like facets remain deferred. Unknown is a valid complete classification and is distinct from unattributed
+volume residual.
+
+Every non-Unknown rule emits a stable evidence code, explanation, and confidence. Verified is reserved for
+authoritative OS/native facts; strong purpose classification from accepted platform roots is High. Generic
+recall-sensitive attributes can establish CloudPlaceholder but not cloud-provider ownership or the CloudBacked
+primary category. Observed hard-link evidence means only that multiple visible paths share one native identity;
+it does not prove the global link count or exclusive allocation.
+
+Category accounting preserves three independent quantities: raw reported path allocation, uncertain measured
+allocation, and deduplicated observed allocation. Eligible identities contribute physical allocation exactly once.
+Aliases agreeing on category use that category; cross-category aliases contribute once to Unknown, never to the
+first observed alias and never to both categories. Identity-unavailable or unsupported evidence stays raw and
+uncertain. Conflicted paths contribute no ambiguous numeric path totals. Complete authoritative category sums
+must exactly equal the corresponding F1-13 raw, uncertain, and deduplicated totals. A mismatch produces
+`AnalysisQuality.Unavailable` with `AccountingMismatch`; no balancing Unknown bytes are invented.
+Volume reconciliation residual remains separate.
+
+The join to caller-constructible F1-13 results is bidirectional. Analysis retains bounded identity-to-path and
+path-to-identity associations, reconstructs group eligibility and conflict reasons from the observed stream, and
+requires every allocation group's identity, complete path set, reasons, and eligible reported allocation to agree.
+Swapped, missing, extra, stale, or tampered groups therefore become `AccountingMismatch`, including legitimate
+poisoned paths that observed more than one identity without reducing validation to the first observed fact.
+
+Largest hierarchy candidates rank non-synthetic hierarchy nodes by inclusive attributed observed allocation.
+Largest identity candidates rank eligible groups, and the file view includes only eligible single-path file
+groups. Multi-alias groups are not multiplied into physical file candidates. Unknown candidates are a filtered
+listing view, not an additive total. Each view uses a bounded deterministic top-N set (default 100, maximum
+1,000) with allocation, scope, ordinal path, volume identity, and object identity tie-breaking. Ranking does not
+add the Large facet.
+
+Application exposes a platform-neutral, volume-bound `StorageClassificationContext`. The Windows provider
+rediscovers the trusted system volume, obtains the mandatory Windows directory from
+`GetSystemWindowsDirectoryW`, and uses `SHGetKnownFolderPath` with `KF_FLAG_DONT_VERIFY` for Program Files,
+ProgramData, current-user Profile/AppData, Public, and UserProfiles roots. Existing
+`GetVolumePathNameW`/`GetVolumeNameForVolumeMountPointW` declarations bind every accepted root to the same
+GUID volume. Optional missing or foreign-volume roots are omitted and make context incomplete; no environment,
+drive-letter, localized-name, registry, or filesystem fallback exists. The only new native declaration is
+`SHGetKnownFolderPath`, and its CoTaskMem result is always released.
+
+`StorageClassificationContext` is authoritative input, not a filesystem proof created merely by attaching a
+`VolumeIdentity`. Production callers must obtain it from a trusted `IStorageClassificationContextProvider`;
+provider implementations own root provenance and same-volume binding. Application contracts reject
+drive-relative, malformed GUID-volume, ADS, mixed-separator, NUL, empty-component, and dot-segment roots.
+Analysis deliberately trusts the supplied context and performs no filesystem/native provenance revalidation,
+rescan, or path reopen.
+
+Analysis uses checked arithmetic, path/identity limits, bounded candidate sets, and a deterministic estimated
+256 MiB state budget. Resource exhaustion or arithmetic overflow clears F1-14 authoritative state and marks
+analysis unavailable, but the sink continues accepting safe entries so successful F1-13 scanning/accounting can
+finish. Volume validation and cancellation remain active after degradation. Cancellation propagates and never
+becomes a completed degraded result.
+
+Hierarchy candidate generation uses an explicit iterative traversal; filesystem depth does not consume managed
+call-stack frames. Candidate evidence codes are semantic identities: exact duplicates are collapsed, while a
+same-code difference in description or confidence is rejected instead of selecting an arbitrary winner.
+
 This document is the technical baseline for implementation and must remain consistent with `BUSINESS_LOGIC_V1_1.md` and `SECURITY_MODEL_V1.md`.

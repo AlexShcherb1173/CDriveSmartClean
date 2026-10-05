@@ -233,7 +233,7 @@ public sealed class WindowsStorageEnumeratorTests
         Assert.Equal("EnumerateRootAsync", method.Name);
         Assert.Equal(typeof(Task), method.ReturnType);
         Assert.Equal([typeof(SystemVolumeDescriptor), typeof(IStorageEntrySink), typeof(CancellationToken)], method.GetParameters().Select(p => p.ParameterType));
-        Assert.Equal(3, type.Assembly.GetExportedTypes().Length);
+        Assert.Equal(4, type.Assembly.GetExportedTypes().Length);
     }
 
     [Fact]
