@@ -21,16 +21,30 @@ internal static class CategoryAccountingBuilder
     }
 
     internal static StorageAnalysisResult Build(StorageAnalysisRequest request,
-        IReadOnlyDictionary<string, AnalysisPathState> paths, StorageAccountingResult accounting,
-        AnalysisReason sessionReasons, CancellationToken token)
+        IReadOnlyDictionary<string, AnalysisPathState> paths,
+        IReadOnlyDictionary<StorageObjectIdentity, AnalysisIdentityState> identities,
+        StorageAccountingResult accounting, AnalysisReason sessionReasons, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         Dictionary<FindingCategory, Bucket> buckets = Enum.GetValues<FindingCategory>()
             .ToDictionary(category => category, _ => new Bucket());
         AnalysisReason reasons = sessionReasons | MapAccounting(accounting);
         bool accountingAvailable = accounting.Summary.Quality != AccountingQuality.Unavailable && accounting.Root is not null;
-        Dictionary<StorageObjectIdentity, AllocationGroup> groups = accounting.AllocationGroups
-            .ToDictionary(group => group.Identity);
+        var groups = new Dictionary<StorageObjectIdentity, AllocationGroup>();
+        foreach (AllocationGroup group in accounting.AllocationGroups)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!groups.TryAdd(group.Identity, group) ||
+                !identities.TryGetValue(group.Identity, out AnalysisIdentityState? identity) ||
+                identity.Paths.Count != group.Paths.Count || !identity.Paths.SetEquals(group.Paths) ||
+                group.Paths.Any(path => !paths.TryGetValue(path, out AnalysisPathState? state) ||
+                    !state.Identities.Contains(group.Identity)) ||
+                group.Reasons != identity.Reasons ||
+                group.EligibleReportedAllocatedBytes != ExpectedEligibleAllocation(identity))
+                return Mismatch(accounting, reasons);
+        }
+        if (accountingAvailable && groups.Count != identities.Count)
+            return Mismatch(accounting, reasons);
 
         foreach ((string path, AnalysisPathState state) in paths.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
@@ -47,7 +61,7 @@ internal static class CategoryAccountingBuilder
             if (fact.Measurement.Availability != StorageMeasurementAvailability.Available) continue;
             long bytes = fact.Measurement.ReportedAllocatedBytes!.Value;
             bucket.Raw = checked(bucket.Raw + bytes);
-            AccountingReason eligibility = Eligibility(fact);
+            AccountingReason eligibility = fact.Eligibility;
             AllocationGroup? group = null;
             if (fact.Identity is { } objectIdentity)
             {
@@ -149,18 +163,10 @@ internal static class CategoryAccountingBuilder
         return result;
     }
 
-    private static AccountingReason Eligibility(AnalysisEntryFact fact)
-    {
-        AccountingReason result = AccountingReason.None;
-        if (fact.Identity is null) result |= AccountingReason.IdentityUnavailable;
-        if (fact.Measurement.Availability != StorageMeasurementAvailability.Available)
-            result |= AccountingReason.MeasurementUnavailable;
-        if (fact.Kind != StorageObjectKind.File || fact.Reparse != ReparseKind.None ||
-            fact.Measurement.Scope != StorageMeasurementScope.FileContent ||
-            (fact.Attributes & ~(StorageEntryAttributes.Sparse | StorageEntryAttributes.Compressed)) != 0)
-            result |= AccountingReason.UnsupportedAllocationEvidence;
-        return result;
-    }
+    private static long? ExpectedEligibleAllocation(AnalysisIdentityState identity) =>
+        identity.Reasons == AccountingReason.None
+            ? identity.ReferenceFact.Measurement.ReportedAllocatedBytes
+            : null;
 
     private static FindingCategory GroupCategory(IReadOnlyList<AnalysisPathState> states, bool conflicted)
     {
@@ -202,7 +208,10 @@ internal static class CategoryAccountingBuilder
         IReadOnlyDictionary<string, AnalysisPathState> paths, DeterministicClassificationEngine classifier,
         BoundedCandidateSet hierarchy, BoundedCandidateSet unknown, CancellationToken token)
     {
-        foreach (StorageHierarchyNode child in node.Children)
+        var pending = new Stack<StorageHierarchyNode>();
+        for (int index = node.Children.Count - 1; index >= 0; index--)
+            pending.Push(node.Children[index]);
+        while (pending.TryPop(out StorageHierarchyNode? child))
         {
             token.ThrowIfCancellationRequested();
             DeterministicClassificationEngine.Result classification;
@@ -226,7 +235,8 @@ internal static class CategoryAccountingBuilder
                 [child.RelativePath], null, aggregate.FileCount, aggregate.DirectoryCount);
             hierarchy.Add(candidate);
             if (candidate.PrimaryCategory == FindingCategory.Unknown) unknown.Add(candidate);
-            AddHierarchy(child, request, paths, classifier, hierarchy, unknown, token);
+            for (int index = child.Children.Count - 1; index >= 0; index--)
+                pending.Push(child.Children[index]);
         }
     }
 

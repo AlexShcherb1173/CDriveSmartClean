@@ -2,6 +2,12 @@ using CDriveSmartClean.Application.Scanning.Volumes;
 
 namespace CDriveSmartClean.Application.Analysis;
 
+/// <summary>Inputs for one deterministic storage-analysis session.</summary>
+/// <remarks>
+/// <see cref="ClassificationContext"/> is authoritative input. Production callers must obtain it from a trusted
+/// <see cref="IStorageClassificationContextProvider"/> whose implementation establishes root provenance and
+/// same-volume binding. Analysis does not reopen context roots or independently validate them against the filesystem.
+/// </remarks>
 public sealed class StorageAnalysisRequest
 {
     public StorageAnalysisRequest(SystemVolumeDescriptor systemVolume,

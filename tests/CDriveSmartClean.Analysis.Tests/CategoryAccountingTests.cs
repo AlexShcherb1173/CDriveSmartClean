@@ -134,6 +134,110 @@ public sealed class CategoryAccountingTests
     }
 
     [Fact]
+    public async Task SwappedAllocationGroupPathsAreRejectedEvenWhenTotalsBalance()
+    {
+        StorageObjectIdentity systemIdentity = TestData.Identity();
+        StorageObjectIdentity dataIdentity = TestData.Identity();
+        StorageEntry system = TestData.Entry(@"Windows\one", systemIdentity, 10);
+        StorageEntry data = TestData.Entry(@"ProgramData\two", dataIdentity, 20);
+        AllocationGroup[] groups =
+        [
+            new(systemIdentity, ["ProgramData\\two"], 10, AccountingReason.None, ""),
+            new(dataIdentity, ["Windows\\one"], 20, AccountingReason.None, ""),
+        ];
+        StorageAccountingResult accounting = AccountingWithTotals(
+            [system, data], groups, raw: 30, uncertain: 0, deduplicated: 30);
+
+        AssertMismatch(await TestData.Analyze([system, data], accounting: accounting));
+    }
+
+    [Fact]
+    public async Task EligibleAllocationTamperingIsRejectedEvenWhenAggregatesAgree()
+    {
+        StorageEntry entry = TestData.Entry("one", TestData.Identity(), 10);
+        AllocationGroup[] groups =
+        [
+            new(entry.ObjectIdentity!, ["one"], 20, AccountingReason.None, ""),
+        ];
+        StorageAccountingResult accounting = AccountingWithTotals(
+            [entry], groups, raw: 10, uncertain: 0, deduplicated: 20);
+
+        AssertMismatch(await TestData.Analyze([entry], accounting: accounting));
+    }
+
+    [Fact]
+    public async Task AllocationGroupReasonTamperingIsRejectedEvenWhenAggregatesAgree()
+    {
+        StorageEntry entry = TestData.Entry("one", TestData.Identity(), 10);
+        const AccountingReason reason = AccountingReason.UnsupportedAllocationEvidence;
+        AllocationGroup[] groups =
+        [
+            new(entry.ObjectIdentity!, ["one"], null, reason, ""),
+        ];
+        StorageAccountingResult accounting = AccountingWithTotals(
+            [entry], groups, raw: 10, uncertain: 10, deduplicated: 0, reason);
+
+        AssertMismatch(await TestData.Analyze([entry], accounting: accounting));
+    }
+
+    [Fact]
+    public async Task MissingObservedIdentityGroupIsRejected()
+    {
+        StorageEntry entry = TestData.Entry("one", TestData.Identity(), 10);
+        StorageAccountingResult accounting = AccountingWithTotals(
+            [entry], [], raw: 10, uncertain: 10, deduplicated: 0,
+            reasons: AccountingReason.IdentityUnavailable);
+
+        AssertMismatch(await TestData.Analyze([entry], accounting: accounting));
+    }
+
+    [Fact]
+    public async Task ExtraUnobservedIdentityGroupIsRejected()
+    {
+        StorageObjectIdentity identity = TestData.Identity();
+        AllocationGroup[] groups = [new(identity, ["ghost"], 1, AccountingReason.None, "")];
+        StorageAccountingResult accounting = AccountingWithTotals(
+            [], groups, raw: 0, uncertain: 0, deduplicated: 1);
+
+        AssertMismatch(await TestData.Analyze([], accounting: accounting));
+    }
+
+    [Fact]
+    public async Task PoisonedPathIdentityPermutationsRemainValidAndDeterministic()
+    {
+        StorageObjectIdentity a = TestData.Identity();
+        StorageObjectIdentity b = TestData.Identity();
+        StorageObjectIdentity c = TestData.Identity();
+        StorageEntry entryA = TestData.Entry("same", a, 10);
+        StorageEntry entryB = TestData.Entry("same", b, 10);
+        StorageEntry entryC = TestData.Entry("same", c, 10);
+        StorageEntry entryNull = TestData.Entry("same", null, 10);
+
+        StorageAnalysisResult ab = await AnalyzePoisoned([entryA, entryB]);
+        StorageAnalysisResult ba = await AnalyzePoisoned([entryB, entryA]);
+        StorageAnalysisResult aba = await AnalyzePoisoned([entryA, entryB, entryA]);
+        StorageAnalysisResult nullA = await AnalyzePoisoned([entryNull, entryA]);
+        StorageAnalysisResult aNull = await AnalyzePoisoned([entryA, entryNull]);
+        StorageAnalysisResult abc = await AnalyzePoisoned([entryA, entryB, entryC]);
+        StorageAnalysisResult cba = await AnalyzePoisoned([entryC, entryB, entryA]);
+
+        AssertEquivalent(ab, ba);
+        AssertEquivalent(ab, aba);
+        AssertEquivalent(nullA, aNull);
+        AssertEquivalent(abc, cba);
+        foreach (StorageAnalysisResult result in new[] { ab, ba, aba, nullA, aNull, abc, cba })
+        {
+            Assert.NotEqual(AnalysisQuality.Unavailable, result.Quality);
+            Assert.True(result.Reasons.HasFlag(AnalysisReason.ConflictingPathEvidence));
+            Assert.False(result.Reasons.HasFlag(AnalysisReason.AccountingMismatch));
+            Assert.Equal(0, result.CategorySummaries.Sum(summary => summary.RawVisibleAllocatedBytes));
+            Assert.Equal(0, result.CategorySummaries.Sum(summary => summary.DeduplicatedObservedAllocatedBytes));
+            Assert.Empty(result.LargestIdentityCandidates);
+            Assert.Empty(result.LargestFileCandidates);
+        }
+    }
+
+    [Fact]
     public async Task VolumeResidualDoesNotBecomeUnknownAllocation()
     {
         StorageEntry entry = TestData.Entry(@"Windows\a", TestData.Identity(), 10);
@@ -150,6 +254,68 @@ public sealed class CategoryAccountingTests
 
     private static CategorySummary Summary(StorageAnalysisResult result, FindingCategory category) =>
         result.CategorySummaries.Single(summary => summary.Category == category);
+
+    private static void AssertMismatch(StorageAnalysisResult result)
+    {
+        Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
+        Assert.True(result.Reasons.HasFlag(AnalysisReason.AccountingMismatch));
+        Assert.Empty(result.CategorySummaries);
+        Assert.Empty(result.LargestHierarchyCandidates);
+        Assert.Empty(result.LargestIdentityCandidates);
+        Assert.Empty(result.LargestFileCandidates);
+        Assert.Empty(result.LargestUnknownCandidates);
+    }
+
+    private static async Task<StorageAnalysisResult> AnalyzePoisoned(StorageEntry[] entries) =>
+        await TestData.Analyze(entries, accounting: PoisonedPathAccounting(entries));
+
+    private static void AssertEquivalent(StorageAnalysisResult left, StorageAnalysisResult right)
+    {
+        Assert.Equal(left.Quality, right.Quality);
+        Assert.Equal(left.Reasons, right.Reasons);
+        Assert.Equal(left.CategorySummaries.Select(Snapshot), right.CategorySummaries.Select(Snapshot));
+    }
+
+    private static object Snapshot(CategorySummary summary) => new
+    {
+        summary.Category,
+        summary.DeduplicatedObservedAllocatedBytes,
+        summary.RawVisibleAllocatedBytes,
+        summary.UncertainMeasuredAllocatedBytes,
+        summary.PathCount,
+        summary.IdentityGroupCount,
+        summary.Quality,
+        summary.Reasons,
+    };
+
+    private static StorageAccountingResult PoisonedPathAccounting(StorageEntry[] entries)
+    {
+        const AccountingReason reason = AccountingReason.ConflictingPathEvidence;
+        StorageObjectIdentity[] identities = entries.Where(entry => entry.ObjectIdentity is not null)
+            .Select(entry => entry.ObjectIdentity!).Distinct().ToArray();
+        AllocationGroup[] groups = identities.Select(identity =>
+            new AllocationGroup(identity, ["same"], null, reason, "")).ToArray();
+        return AccountingWithTotals(entries, groups, raw: 0, uncertain: 0,
+            deduplicated: 0, reasons: reason, conflictedIdentityCount: identities.Length);
+    }
+
+    private static StorageAccountingResult AccountingWithTotals(StorageEntry[] entries,
+        AllocationGroup[] groups, long raw, long uncertain, long deduplicated,
+        AccountingReason reasons = AccountingReason.None, long conflictedIdentityCount = 0)
+    {
+        var aggregate = new StorageAggregate(rawReportedAllocatedBytes: raw,
+            uncertainMeasuredAllocatedBytes: uncertain,
+            inclusiveAttributedObservedAllocatedBytes: deduplicated,
+            conflictedIdentityCount: conflictedIdentityCount);
+        var root = new StorageHierarchyNode("", aggregate, []);
+        var summary = new StorageAccountingSummary(aggregate, reasons);
+        var snapshot = VolumeSpaceSnapshot.Available(TestData.Volume, DateTimeOffset.UnixEpoch,
+            1_000_000, 1_000_000 - deduplicated, 1_000_000, 1_000_000 - deduplicated,
+            deduplicated, 0, 0);
+        return new StorageAccountingResult(summary, root, groups,
+            new VolumeReconciliation(snapshot, snapshot, summary, true), true,
+            new Dictionary<CDriveSmartClean.Application.Scanning.Traversal.StorageTraversalIssueKind, long>());
+    }
 
     private static StorageAccountingResult ConflictedPathAccounting(
         StorageObjectIdentity first, StorageObjectIdentity second)

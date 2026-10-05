@@ -35,7 +35,7 @@ public sealed class StorageAnalysisContractsTests
         var evidence = new List<Evidence>
         {
             new("z", "z", Confidence.High),
-            new("a", "second", Confidence.Low),
+            new("a", "first", Confidence.Verified),
             new("a", "first", Confidence.Verified),
         };
         var candidate = new StorageAnalysisCandidate(AnalysisCandidateScope.HierarchyNode, FindingCategory.Unknown,
@@ -47,6 +47,25 @@ public sealed class StorageAnalysisContractsTests
         Assert.Equal([FindingFacet.Compressed, FindingFacet.Sparse], candidate.Facets);
         Assert.Equal(["a", "z"], candidate.Evidence.Select(item => item.Code));
         Assert.Throws<NotSupportedException>(() => ((IList<string>)candidate.RelativePaths).Add("c"));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void CandidateRejectsConflictingSameCodeEvidenceRegardlessOfOrder(
+        bool differentDescription, bool reverse)
+    {
+        var first = new Evidence("stable.code", "description", Confidence.Verified);
+        var second = new Evidence("stable.code",
+            differentDescription ? "other description" : "description",
+            differentDescription ? Confidence.Verified : Confidence.Low);
+        Evidence[] evidence = reverse ? [second, first] : [first, second];
+
+        Assert.Throws<ArgumentException>(() => new StorageAnalysisCandidate(
+            AnalysisCandidateScope.HierarchyNode, FindingCategory.Unknown, [], Confidence.Unknown,
+            evidence, new(null, null, null, null), ["a"], null, 0, 1));
     }
 
     [Theory]

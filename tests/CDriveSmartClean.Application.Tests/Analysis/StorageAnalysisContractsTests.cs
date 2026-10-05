@@ -48,6 +48,50 @@ public sealed class StorageAnalysisContractsTests
         Assert.False(context.IsComplete);
     }
 
+    [Theory]
+    [InlineData(@"C:folder")]
+    [InlineData(@"C:")]
+    [InlineData(@"C:\foo\..\bar")]
+    [InlineData(@"C:\foo\.\bar")]
+    [InlineData("C:\\foo\\\\bar")]
+    [InlineData("C:/foo")]
+    [InlineData(@"C:\foo:ads")]
+    [InlineData(@"\\?\VolumeNotAGuid\foo")]
+    public void ContextRejectsNoncanonicalWindowsRoots(string path) =>
+        Assert.Throws<ArgumentException>(() => new StorageClassificationContext(
+            Volume, path, [], null, null, [], null, null, []));
+
+    [Fact]
+    public void ContextRejectsNulContainingRoot() =>
+        Assert.Throws<ArgumentException>(() => new StorageClassificationContext(
+            Volume, "C:\\foo\0bar", [], null, null, [], null, null, []));
+
+    [Theory]
+    [InlineData(@"C:\")]
+    [InlineData(@"C:\Windows")]
+    [InlineData(@"\\?\Volume{11111111-1111-1111-1111-111111111111}\")]
+    [InlineData(@"\\?\Volume{11111111-1111-1111-1111-111111111111}\Windows")]
+    public void ContextAcceptsCanonicalDriveAndGuidVolumeRoots(string path)
+    {
+        var context = new StorageClassificationContext(
+            Volume, path, [], null, null, [], null, null, []);
+        Assert.Equal(path, context.WindowsDirectory);
+    }
+
+    [Fact]
+    public void ContextCaseVariantDeduplicationIsInputOrderIndependent()
+    {
+        var left = new StorageClassificationContext(Volume, @"C:\Windows", [@"C:\A", @"c:\a"], null,
+            null, [@"C:\Users\Current\AppData", @"c:\users\current\appdata"], null, null, []);
+        var right = new StorageClassificationContext(Volume, @"C:\Windows", [@"c:\a", @"C:\A"], null,
+            null, [@"c:\users\current\appdata", @"C:\Users\Current\AppData"], null, null, []);
+
+        Assert.Equal(left.ProgramFilesRoots, right.ProgramFilesRoots);
+        Assert.Equal(left.CurrentUserAppDataRoots, right.CurrentUserAppDataRoots);
+        Assert.Equal([@"C:\A"], left.ProgramFilesRoots);
+        Assert.Equal([@"C:\Users\Current\AppData"], left.CurrentUserAppDataRoots);
+    }
+
     [Fact]
     public void RequestRejectsVolumeMismatch()
     {

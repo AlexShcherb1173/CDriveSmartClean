@@ -105,6 +105,34 @@ public sealed class LargestCandidateTests
             candidate => Assert.DoesNotContain(FindingFacet.Large, candidate.Facets));
     }
 
+    [Fact]
+    public async Task TwoThousandLevelHierarchyIsTraversedIterativelyAndRemainsBounded()
+    {
+        const int depth = 2000;
+        var aggregate = new StorageAggregate();
+        string[] paths = new string[depth];
+        paths[0] = "d";
+        for (int index = 1; index < paths.Length; index++)
+            paths[index] = paths[index - 1] + "\\d";
+        StorageHierarchyNode current = new(paths[^1], aggregate, []);
+        for (int index = paths.Length - 2; index >= 0; index--)
+            current = new StorageHierarchyNode(paths[index], aggregate, [current]);
+        var root = new StorageHierarchyNode("", aggregate, [current]);
+        var summary = new StorageAccountingSummary(aggregate, AccountingReason.None);
+        var snapshot = VolumeSpaceSnapshot.Available(TestData.Volume, DateTimeOffset.UnixEpoch,
+            1_000_000, 1_000_000, 1_000_000, 1_000_000, 0, 0, 0);
+        var accounting = new StorageAccountingResult(summary, root, [],
+            new VolumeReconciliation(snapshot, snapshot, summary, true), true,
+            new Dictionary<CDriveSmartClean.Application.Scanning.Traversal.StorageTraversalIssueKind, long>());
+
+        StorageAnalysisResult result = await TestData.Analyze([], accounting: accounting);
+
+        Assert.Equal(AnalysisQuality.Complete, result.Quality);
+        Assert.Equal(100, result.LargestHierarchyCandidates.Count);
+        Assert.All(result.LargestHierarchyCandidates,
+            candidate => Assert.NotEmpty(candidate.RelativePaths[0]));
+    }
+
     private static StorageAccountingResult HierarchyAccounting(params CDriveSmartClean.Application.Scanning.Enumeration.StorageEntry[] entries)
     {
         AllocationGroup[] groups = entries.Select(entry => new AllocationGroup(entry.ObjectIdentity!,

@@ -26,9 +26,14 @@ public sealed class StorageAnalysisCandidate
         Evidence[] orderedEvidence = evidence.ToArray();
         if (orderedEvidence.Any(item => item is null))
             throw new ArgumentException("Evidence cannot contain null.", nameof(evidence));
-        orderedEvidence = orderedEvidence.OrderBy(item => item.Code, StringComparer.Ordinal)
-            .ThenBy(item => item.Description, StringComparer.Ordinal).ThenBy(item => item.Confidence)
-            .GroupBy(item => item.Code, StringComparer.Ordinal).Select(group => group.First()).ToArray();
+        IGrouping<string, Evidence>[] evidenceGroups = orderedEvidence
+            .GroupBy(item => item.Code, StringComparer.Ordinal).ToArray();
+        if (evidenceGroups.Any(group => group.Skip(1).Any(item =>
+                !item.Description.Equals(group.First().Description, StringComparison.Ordinal) ||
+                item.Confidence != group.First().Confidence)))
+            throw new ArgumentException("Evidence sharing a code must be semantically identical.", nameof(evidence));
+        orderedEvidence = evidenceGroups.Select(group => group.First())
+            .OrderBy(item => item.Code, StringComparer.Ordinal).ToArray();
         string[] orderedPaths = relativePaths.ToArray();
         if (orderedPaths.Length == 0 || orderedPaths.Any(string.IsNullOrWhiteSpace))
             throw new ArgumentException("At least one non-empty path is required.", nameof(relativePaths));

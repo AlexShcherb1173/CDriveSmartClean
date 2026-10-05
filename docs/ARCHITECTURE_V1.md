@@ -1016,6 +1016,12 @@ must exactly equal the corresponding F1-13 raw, uncertain, and deduplicated tota
 `AnalysisQuality.Unavailable` with `AccountingMismatch`; no balancing Unknown bytes are invented.
 Volume reconciliation residual remains separate.
 
+The join to caller-constructible F1-13 results is bidirectional. Analysis retains bounded identity-to-path and
+path-to-identity associations, reconstructs group eligibility and conflict reasons from the observed stream, and
+requires every allocation group's identity, complete path set, reasons, and eligible reported allocation to agree.
+Swapped, missing, extra, stale, or tampered groups therefore become `AccountingMismatch`, including legitimate
+poisoned paths that observed more than one identity without reducing validation to the first observed fact.
+
 Largest hierarchy candidates rank non-synthetic hierarchy nodes by inclusive attributed observed allocation.
 Largest identity candidates rank eligible groups, and the file view includes only eligible single-path file
 groups. Multi-alias groups are not multiplied into physical file candidates. Unknown candidates are a filtered
@@ -1032,10 +1038,21 @@ GUID volume. Optional missing or foreign-volume roots are omitted and make conte
 drive-letter, localized-name, registry, or filesystem fallback exists. The only new native declaration is
 `SHGetKnownFolderPath`, and its CoTaskMem result is always released.
 
+`StorageClassificationContext` is authoritative input, not a filesystem proof created merely by attaching a
+`VolumeIdentity`. Production callers must obtain it from a trusted `IStorageClassificationContextProvider`;
+provider implementations own root provenance and same-volume binding. Application contracts reject
+drive-relative, malformed GUID-volume, ADS, mixed-separator, NUL, empty-component, and dot-segment roots.
+Analysis deliberately trusts the supplied context and performs no filesystem/native provenance revalidation,
+rescan, or path reopen.
+
 Analysis uses checked arithmetic, path/identity limits, bounded candidate sets, and a deterministic estimated
 256 MiB state budget. Resource exhaustion or arithmetic overflow clears F1-14 authoritative state and marks
 analysis unavailable, but the sink continues accepting safe entries so successful F1-13 scanning/accounting can
 finish. Volume validation and cancellation remain active after degradation. Cancellation propagates and never
 becomes a completed degraded result.
+
+Hierarchy candidate generation uses an explicit iterative traversal; filesystem depth does not consume managed
+call-stack frames. Candidate evidence codes are semantic identities: exact duplicates are collapsed, while a
+same-code difference in description or confidence is rejected instead of selecting an arbitrary winner.
 
 This document is the technical baseline for implementation and must remain consistent with `BUSINESS_LOGIC_V1_1.md` and `SECURITY_MODEL_V1.md`.

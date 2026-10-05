@@ -8,7 +8,24 @@ using CDriveSmartClean.Domain.Storage;
 namespace CDriveSmartClean.Analysis;
 
 internal sealed record AnalysisEntryFact(StorageObjectIdentity? Identity, StorageMeasurement Measurement,
-    StorageObjectKind Kind, ReparseKind Reparse, StorageEntryAttributes Attributes);
+    StorageObjectKind Kind, ReparseKind Reparse, StorageEntryAttributes Attributes)
+{
+    internal AccountingReason Eligibility
+    {
+        get
+        {
+            AccountingReason result = AccountingReason.None;
+            if (Identity is null) result |= AccountingReason.IdentityUnavailable;
+            if (Measurement.Availability != StorageMeasurementAvailability.Available)
+                result |= AccountingReason.MeasurementUnavailable;
+            if (Kind != StorageObjectKind.File || Reparse != ReparseKind.None ||
+                Measurement.Scope != StorageMeasurementScope.FileContent ||
+                (Attributes & ~(StorageEntryAttributes.Sparse | StorageEntryAttributes.Compressed)) != 0)
+                result |= AccountingReason.UnsupportedAllocationEvidence;
+            return result;
+        }
+    }
+}
 
 internal sealed class AnalysisPathState(
     string relativePath,
@@ -18,7 +35,15 @@ internal sealed class AnalysisPathState(
     internal string RelativePath { get; } = relativePath;
     internal AnalysisEntryFact Fact { get; } = fact;
     internal DeterministicClassificationEngine.Result Classification { get; } = classification;
+    internal HashSet<StorageObjectIdentity> Identities { get; } = [];
     internal bool Poisoned { get; set; }
+}
+
+internal sealed class AnalysisIdentityState(AnalysisEntryFact fact)
+{
+    internal AnalysisEntryFact ReferenceFact { get; } = fact;
+    internal HashSet<string> Paths { get; } = new(StringComparer.Ordinal);
+    internal AccountingReason Reasons { get; set; } = fact.Eligibility;
 }
 
 internal sealed class StorageAnalysisSession : IStorageAnalysisSession
@@ -27,7 +52,7 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
     private readonly DeterministicClassificationEngine classifier;
     private readonly AnalysisResourceGuard resourceGuard;
     private readonly Dictionary<string, AnalysisPathState> paths = new(StringComparer.Ordinal);
-    private readonly HashSet<StorageObjectIdentity> identities = [];
+    private readonly Dictionary<StorageObjectIdentity, AnalysisIdentityState> identities = [];
     private AnalysisReason reasons;
     private bool disabled;
     private bool completed;
@@ -54,7 +79,9 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
         var fact = new AnalysisEntryFact(entry.ObjectIdentity, entry.Measurement, entry.ObjectKind,
             entry.ReparseKind, entry.Attributes);
         bool newPath = !paths.TryGetValue(relative, out AnalysisPathState? existing);
-        bool newIdentity = entry.ObjectIdentity is { } identity && !identities.Contains(identity);
+        bool newIdentity = entry.ObjectIdentity is { } identity && !identities.ContainsKey(identity);
+        bool newAssociation = entry.ObjectIdentity is { } associatedIdentity &&
+            (newIdentity || !identities[associatedIdentity].Paths.Contains(relative));
         if (newPath && paths.Count >= request.Options.MaximumPathStates ||
             newIdentity && identities.Count >= request.Options.MaximumIdentityStates)
         {
@@ -66,7 +93,8 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
         try
         {
             charge = checked((newPath ? 768L + relative.Length * 8L : 0L) +
-                (newIdentity ? 768L : 0L) + (newPath ? 256L : 0L));
+                (newIdentity ? 768L : 0L) + (newPath ? 256L : 0L) +
+                (newAssociation ? 128L : 0L));
         }
         catch (OverflowException)
         {
@@ -79,24 +107,43 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
             return ValueTask.CompletedTask;
         }
 
+        if (entry.ObjectIdentity is null) reasons |= AnalysisReason.IdentityUnavailable;
+        if (entry.Measurement.Availability != StorageMeasurementAvailability.Available)
+            reasons |= AnalysisReason.MeasurementUnavailable;
+        if (IsUnsupported(fact)) reasons |= AnalysisReason.UnsupportedAllocationEvidence;
+
         if (newPath)
         {
             DeterministicClassificationEngine.Result classification = classifier.Classify(entry.CanonicalPath, entry.Attributes);
             reasons |= classification.Reasons;
             existing = new AnalysisPathState(relative, fact, classification);
             paths.Add(relative, existing);
-            if (entry.ObjectIdentity is null) reasons |= AnalysisReason.IdentityUnavailable;
-            if (entry.Measurement.Availability != StorageMeasurementAvailability.Available)
-                reasons |= AnalysisReason.MeasurementUnavailable;
-            if (IsUnsupported(fact)) reasons |= AnalysisReason.UnsupportedAllocationEvidence;
         }
         else if (existing!.Fact != fact)
         {
             existing.Poisoned = true;
             reasons |= AnalysisReason.ConflictingPathEvidence;
+            foreach (StorageObjectIdentity previous in existing.Identities)
+                identities[previous].Reasons |= AccountingReason.ConflictingPathEvidence;
         }
 
-        if (entry.ObjectIdentity is { } objectIdentity) identities.Add(objectIdentity);
+        if (entry.ObjectIdentity is { } objectIdentity)
+        {
+            if (!identities.TryGetValue(objectIdentity, out AnalysisIdentityState? identityState))
+            {
+                identityState = new AnalysisIdentityState(fact);
+                identities.Add(objectIdentity, identityState);
+            }
+            else if (identityState.ReferenceFact != fact)
+            {
+                identityState.Reasons |= AccountingReason.ConflictingIdentityEvidence;
+            }
+            identityState.Reasons |= fact.Eligibility;
+            identityState.Paths.Add(relative);
+            existing!.Identities.Add(objectIdentity);
+            if (existing.Poisoned)
+                identityState.Reasons |= AccountingReason.ConflictingPathEvidence;
+        }
         return ValueTask.CompletedTask;
     }
 
@@ -126,7 +173,8 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
             if (!resourceGuard.TryCharge(finalizationCharge, out bool overflow))
                 return Unavailable(accountingResult, reasons |
                     (overflow ? AnalysisReason.ArithmeticOverflow : AnalysisReason.ResourceLimit));
-            return CategoryAccountingBuilder.Build(request, paths, accountingResult, reasons, cancellationToken);
+            return CategoryAccountingBuilder.Build(
+                request, paths, identities, accountingResult, reasons, cancellationToken);
         }
         catch (OverflowException)
         {
