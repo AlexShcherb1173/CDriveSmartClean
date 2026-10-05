@@ -168,11 +168,16 @@ Every significant finding uses distinct size concepts.
 ```text
 SizeMetrics
 {
-    LogicalBytes
-    AllocatedBytes
-    ExclusiveAllocatedBytes
+    LogicalBytes?
+    AllocatedBytes?
+    ExclusiveAllocatedBytes?
 }
 ```
+
+Each field is independently available: `null` means the value was not established, while zero means an
+authoritatively known zero. A known exclusive allocation requires a known allocation and cannot exceed it.
+Logical and allocated sizes have no required ordering because compression, sparse storage, allocation units,
+and placeholders can make either larger than the other.
 
 ### LogicalBytes
 
@@ -185,6 +190,10 @@ The physical allocation consumed on the volume.
 ### ExclusiveAllocatedBytes
 
 The allocation attributable exclusively to this object after accounting for shared/hard-linked data where possible.
+
+Observed attributed allocation is not necessarily exclusive allocation. Neither logical, allocated, nor
+exclusive allocation is itself a reclaim estimate. Reclaim remains an independent claim and is `Unknown` until
+a supported action and its overlap/preconditions establish numeric bounds.
 
 The product must handle:
 

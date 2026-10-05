@@ -2,11 +2,18 @@ namespace CDriveSmartClean.Domain.Storage;
 
 public sealed class SizeMetrics
 {
-    public SizeMetrics(long logicalBytes, long allocatedBytes, long exclusiveAllocatedBytes)
+    public SizeMetrics(long? logicalBytes, long? allocatedBytes, long? exclusiveAllocatedBytes)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(logicalBytes);
-        ArgumentOutOfRangeException.ThrowIfNegative(allocatedBytes);
-        ArgumentOutOfRangeException.ThrowIfNegative(exclusiveAllocatedBytes);
+        Validate(logicalBytes, nameof(logicalBytes));
+        Validate(allocatedBytes, nameof(allocatedBytes));
+        Validate(exclusiveAllocatedBytes, nameof(exclusiveAllocatedBytes));
+
+        if (exclusiveAllocatedBytes is not null && allocatedBytes is null)
+        {
+            throw new ArgumentException(
+                "Exclusive allocated bytes require known allocated bytes.",
+                nameof(exclusiveAllocatedBytes));
+        }
 
         if (exclusiveAllocatedBytes > allocatedBytes)
         {
@@ -20,9 +27,17 @@ public sealed class SizeMetrics
         ExclusiveAllocatedBytes = exclusiveAllocatedBytes;
     }
 
-    public long LogicalBytes { get; }
+    public long? LogicalBytes { get; }
 
-    public long AllocatedBytes { get; }
+    public long? AllocatedBytes { get; }
 
-    public long ExclusiveAllocatedBytes { get; }
+    public long? ExclusiveAllocatedBytes { get; }
+
+    private static void Validate(long? value, string parameterName)
+    {
+        if (value < 0)
+        {
+            throw new ArgumentOutOfRangeException(parameterName);
+        }
+    }
 }
