@@ -1,8 +1,10 @@
+using CDriveSmartClean.Application.Analysis;
 using CDriveSmartClean.Domain;
 using CDriveSmartClean.Domain.Analysis;
 using CDriveSmartClean.Domain.Findings;
 using CDriveSmartClean.Domain.Reclaim;
 using CDriveSmartClean.Domain.Risk;
+using CDriveSmartClean.Domain.Storage;
 using Xunit;
 
 namespace CDriveSmartClean.Analysis.Tests;
@@ -94,6 +96,32 @@ public sealed class UniversalFindingPolicyTests
         Assert.Equal(ReclaimKind.Unknown, finding.ReclaimEstimate.Kind);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void CacheMatchingIsIndependentOfDriveOrGuidRootRepresentation(
+        bool systemUsesGuid, bool contextUsesGuid)
+    {
+        string driveRoot = @"C:\";
+        string guidRoot = @"\\?\Volume{" + UniversalFindingTestData.Volume.Id.ToString("D") + @"}\";
+        string systemRoot = systemUsesGuid ? guidRoot : driveRoot;
+        string contextRoot = contextUsesGuid ? guidRoot : driveRoot;
+        var context = new StorageClassificationContext(UniversalFindingTestData.Volume,
+            Join(contextRoot, "Windows"), [Join(contextRoot, "Program Files")],
+            Join(contextRoot, "ProgramData"), Join(contextRoot, "Users\\Current"),
+            [Join(contextRoot, "Users\\Current\\AppData\\Local")],
+            Join(contextRoot, "Users\\Public"), Join(contextRoot, "Users"), []);
+        StorageHierarchyNode node = UniversalFindingTestData.HierarchyNode(
+            "Users\\Current\\AppData\\Local\\Vendor\\Cache", 10);
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
+            hierarchyChildren: [node], classificationContext: context, systemRoot: systemRoot),
+            TestContext.Current.CancellationToken);
+        Finding finding = Assert.Single(result.Findings);
+        Assert.Contains(FindingFacet.CacheLike, finding.Facets);
+    }
+
     [Fact]
     public void EveryGeneratedFindingUsesUnknownReclaim()
     {
@@ -118,4 +146,6 @@ public sealed class UniversalFindingPolicyTests
         return Assert.Single(builder.Build(
             UniversalFindingTestData.Request(files: [candidate], capacityBytes: capacity), TestContext.Current.CancellationToken).Findings);
     }
+
+    private static string Join(string root, string relative) => root + relative;
 }

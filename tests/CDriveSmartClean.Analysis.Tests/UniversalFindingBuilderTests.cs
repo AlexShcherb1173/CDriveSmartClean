@@ -36,8 +36,10 @@ public sealed class UniversalFindingBuilderTests
         StorageObjectIdentity identity = new(UniversalFindingTestData.Volume,
             Guid.Parse("22222222-2222-2222-2222-222222222222"));
         StorageAnalysisCandidate aliases = UniversalFindingTestData.Candidate(
-            AnalysisCandidateScope.IdentityGroup, FindingCategory.ApplicationData, "alias-a", 40, 30,
-            [FindingFacet.HardLinked], identity, ["alias-b", "alias-a"]);
+            AnalysisCandidateScope.IdentityGroup, FindingCategory.ApplicationData,
+            "Users\\Current\\AppData\\Local\\alias-a", 40, 30,
+            [FindingFacet.HardLinked], identity,
+            ["Users\\Current\\AppData\\Local\\alias-b", "Users\\Current\\AppData\\Local\\alias-a"]);
         UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
             hierarchy: [hierarchy], identities: [aliases], files: [file]), TestContext.Current.CancellationToken);
         Assert.Contains(result.Findings, item => item.Scope == FindingScope.HierarchyArea);
@@ -103,6 +105,226 @@ public sealed class UniversalFindingBuilderTests
         Assert.True(result.Reasons.HasFlag(UniversalFindingReason.InputMismatch));
     }
 
+    [Theory]
+    [InlineData("identity")]
+    [InlineData("path")]
+    [InlineData("allocation")]
+    [InlineData("counts")]
+    [InlineData("foreign-group")]
+    [InlineData("missing-group")]
+    [InlineData("group-path")]
+    public void FileCandidateMustJoinExactEligibleAllocationGroup(string mutation)
+    {
+        StorageAnalysisCandidate genuine = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.File, FindingCategory.UserData, "Users\\Current\\file.bin", 20, 10);
+        StorageObjectIdentity identity = genuine.ObjectIdentity!;
+        StorageAnalysisCandidate candidate = mutation switch
+        {
+            "identity" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.File,
+                FindingCategory.UserData, genuine.RelativePaths[0], 20, 10,
+                identity: new StorageObjectIdentity(UniversalFindingTestData.Volume, Guid.NewGuid())),
+            "path" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.File,
+                FindingCategory.UserData, "Users\\Current\\other.bin", 20, 10, identity: identity),
+            "allocation" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.File,
+                FindingCategory.UserData, genuine.RelativePaths[0], 20, 11, identity: identity),
+            "counts" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.File,
+                FindingCategory.UserData, genuine.RelativePaths[0], 20, 10, identity: identity, fileCount: 2),
+            _ => genuine
+        };
+        var genuineGroup = new AllocationGroup(identity, genuine.RelativePaths, 10,
+            AccountingReason.None, genuine.RelativePaths[0]);
+        AllocationGroup[] groups = mutation switch
+        {
+            "missing-group" => [],
+            "group-path" => [new AllocationGroup(identity, ["Users\\Current\\other.bin"], 10,
+                AccountingReason.None, "Users\\Current\\other.bin")],
+            "foreign-group" => [genuineGroup, new AllocationGroup(
+                new StorageObjectIdentity(new VolumeIdentity(Guid.NewGuid()), Guid.NewGuid()), ["foreign"], 1,
+                AccountingReason.None, "foreign")],
+            _ => [genuineGroup]
+        };
+        AssertInputMismatch(UniversalFindingTestData.Request(files: [candidate], allocationGroups: groups));
+    }
+
+    [Fact]
+    public void PhysicalFileCandidateIsRejectedWhenAccountingIsUnavailable()
+    {
+        StorageAnalysisCandidate candidate = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.File, FindingCategory.UserData, "Users\\Current\\file.bin", 20, 10);
+        AssertInputMismatch(UniversalFindingTestData.Request(files: [candidate], allocationGroups: [],
+            accountingReasons: AccountingReason.ResourceLimit));
+    }
+
+    [Fact]
+    public void KnownAccountingDedupRejectsAnyNullCategoryValue()
+    {
+        CategorySummary[] summaries = Summaries(category => category == FindingCategory.System ? null : 0,
+            category => category == FindingCategory.System ? 10 : 0);
+        AssertInputMismatch(UniversalFindingTestData.Request(categorySummaries: summaries,
+            accountingAggregate: new StorageAggregate(rawReportedAllocatedBytes: 10,
+                inclusiveAttributedObservedAllocatedBytes: 10)));
+    }
+
+    [Fact]
+    public void KnownAccountingDedupRejectsCategorySumMismatch()
+    {
+        CategorySummary[] summaries = Summaries(category => category == FindingCategory.System ? 9 : 0,
+            category => category == FindingCategory.System ? 10 : 0);
+        AssertInputMismatch(UniversalFindingTestData.Request(categorySummaries: summaries,
+            accountingAggregate: new StorageAggregate(rawReportedAllocatedBytes: 10,
+                inclusiveAttributedObservedAllocatedBytes: 10)));
+    }
+
+    [Fact]
+    public void NullAccountingDedupAcceptsNullCategoryValuesWithoutFabrication()
+    {
+        CategorySummary[] summaries = Summaries(_ => null, _ => 0);
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
+            categorySummaries: summaries, allocationGroups: [],
+            accountingReasons: AccountingReason.ResourceLimit), TestContext.Current.CancellationToken);
+        Assert.False(result.Reasons.HasFlag(UniversalFindingReason.InputMismatch));
+        Assert.Empty(result.Findings);
+    }
+
+    [Fact]
+    public void CategoryRawAndDeferredValuesMustRemainCoherent()
+    {
+        CategorySummary[] rawMismatch = Summaries(_ => 0,
+            category => category == FindingCategory.System ? 9 : 0);
+        AssertInputMismatch(UniversalFindingTestData.Request(categorySummaries: rawMismatch,
+            accountingAggregate: new StorageAggregate(rawReportedAllocatedBytes: 10)));
+
+        CategorySummary[] deferred = Summaries(category => category == FindingCategory.Temporary ? 1 : 0,
+            category => category == FindingCategory.Temporary ? 1 : 0);
+        AssertInputMismatch(UniversalFindingTestData.Request(categorySummaries: deferred,
+            accountingAggregate: new StorageAggregate(rawReportedAllocatedBytes: 1,
+                inclusiveAttributedObservedAllocatedBytes: 1)));
+    }
+
+    [Theory]
+    [InlineData("identity")]
+    [InlineData("swapped")]
+    [InlineData("extra")]
+    [InlineData("missing")]
+    [InlineData("allocation")]
+    [InlineData("counts")]
+    public void IdentityCandidateMustJoinExactEligibleAllocationGroup(string mutation)
+    {
+        string[] paths = ["Users\\Current\\AppData\\Local\\a", "Users\\Current\\AppData\\Local\\b"];
+        var identity = new StorageObjectIdentity(UniversalFindingTestData.Volume, Guid.NewGuid());
+        StorageAnalysisCandidate genuine = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.IdentityGroup, FindingCategory.ApplicationData, paths[0], 20, 10,
+            [FindingFacet.HardLinked], identity, paths);
+        StorageAnalysisCandidate candidate = mutation switch
+        {
+            "identity" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.IdentityGroup,
+                FindingCategory.ApplicationData, paths[0], 20, 10, [FindingFacet.HardLinked],
+                new StorageObjectIdentity(UniversalFindingTestData.Volume, Guid.NewGuid()), paths),
+            "swapped" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.IdentityGroup,
+                FindingCategory.ApplicationData, paths[0], 20, 10, [FindingFacet.HardLinked], identity,
+                ["Users\\Current\\AppData\\Local\\c", paths[1]]),
+            "extra" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.IdentityGroup,
+                FindingCategory.ApplicationData, paths[0], 20, 10, [FindingFacet.HardLinked], identity,
+                [.. paths, "Users\\Current\\AppData\\Local\\c"]),
+            "missing" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.IdentityGroup,
+                FindingCategory.ApplicationData, paths[0], 20, 10, identity: identity, paths: [paths[0]]),
+            "allocation" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.IdentityGroup,
+                FindingCategory.ApplicationData, paths[0], 20, 11, [FindingFacet.HardLinked], identity, paths),
+            "counts" => UniversalFindingTestData.Candidate(AnalysisCandidateScope.IdentityGroup,
+                FindingCategory.ApplicationData, paths[0], 20, 10, [FindingFacet.HardLinked], identity, paths,
+                fileCount: 2),
+            _ => genuine
+        };
+        var group = new AllocationGroup(identity, paths, 10, AccountingReason.None, paths[0]);
+        AssertInputMismatch(UniversalFindingTestData.Request(identities: [candidate], allocationGroups: [group]));
+    }
+
+    [Fact]
+    public void ContradictorySinglePathIdentityIsNotHiddenBySuppression()
+    {
+        StorageAnalysisCandidate candidate = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.IdentityGroup, FindingCategory.Unknown, "only", 1, 2);
+        var group = new AllocationGroup(candidate.ObjectIdentity!, candidate.RelativePaths, 1,
+            AccountingReason.None, candidate.RelativePaths[0]);
+        AssertInputMismatch(UniversalFindingTestData.Request(identities: [candidate], allocationGroups: [group]));
+    }
+
+    [Theory]
+    [InlineData("path")]
+    [InlineData("logical")]
+    [InlineData("raw")]
+    [InlineData("observed")]
+    [InlineData("uncertain")]
+    [InlineData("files")]
+    [InlineData("directories")]
+    [InlineData("multipath")]
+    public void HierarchyCandidateMustMatchExactAggregate(string mutation)
+    {
+        const string path = "Program Files\\Area";
+        StorageHierarchyNode node = new(path, new StorageAggregate(20, 11, 2, 3, 10,
+            fileCount: 4, directoryCount: 5), []);
+        StorageAnalysisCandidate candidate = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.HierarchyNode, FindingCategory.Application,
+            mutation == "path" ? "Program Files\\Other" : path,
+            mutation == "logical" ? 21 : 20, mutation == "observed" ? 9 : 10,
+            paths: mutation == "multipath" ? [path, "Program Files\\Other"] : null,
+            rawAllocatedBytes: mutation == "raw" ? 12 : 11,
+            observedAllocatedBytes: mutation == "observed" ? 9 : 10,
+            uncertainAllocatedBytes: mutation == "uncertain" ? 3 : 2,
+            fileCount: mutation == "files" ? 6 : 4,
+            directoryCount: mutation == "directories" ? 6 : 5);
+        AssertInputMismatch(UniversalFindingTestData.Request(hierarchy: [candidate], hierarchyChildren: [node],
+            deriveHierarchyNodes: false));
+    }
+
+    [Theory]
+    [InlineData(AnalysisCandidateScope.File, FindingCategory.System, "Users\\Current\\file.bin")]
+    [InlineData(AnalysisCandidateScope.IdentityGroup, FindingCategory.Unknown,
+        "Users\\Current\\AppData\\Local\\a")]
+    [InlineData(AnalysisCandidateScope.HierarchyNode, FindingCategory.System, "Program Files\\Area")]
+    public void CandidateClassificationMustMatchDeterministicPathRules(
+        AnalysisCandidateScope scope, FindingCategory category, string path)
+    {
+        string[] paths = scope == AnalysisCandidateScope.IdentityGroup
+            ? [path, "Users\\Current\\AppData\\Local\\b"] : [path];
+        StorageAnalysisCandidate candidate = UniversalFindingTestData.Candidate(scope, category, path, 10, 10,
+            identity: scope == AnalysisCandidateScope.HierarchyNode ? null :
+                new StorageObjectIdentity(UniversalFindingTestData.Volume, Guid.NewGuid()), paths: paths);
+        AssertInputMismatch(UniversalFindingTestData.Request(
+            hierarchy: scope == AnalysisCandidateScope.HierarchyNode ? [candidate] : null,
+            identities: scope == AnalysisCandidateScope.IdentityGroup ? [candidate] : null,
+            files: scope == AnalysisCandidateScope.File ? [candidate] : null));
+    }
+
+    [Fact]
+    public void JoinedFileAndIdentityWithholdLogicalWhileHierarchyRetainsIt()
+    {
+        StorageAnalysisCandidate file = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.File, FindingCategory.UserData, "Users\\Current\\file", 31, 11);
+        StorageAnalysisCandidate identity = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.IdentityGroup, FindingCategory.ApplicationData,
+            "Users\\Current\\AppData\\Local\\a", 32, 12, [FindingFacet.HardLinked], paths:
+            ["Users\\Current\\AppData\\Local\\a", "Users\\Current\\AppData\\Local\\b"]);
+        StorageAnalysisCandidate hierarchy = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.HierarchyNode, FindingCategory.Application, "Program Files\\Area", 33, 13);
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
+            hierarchy: [hierarchy], identities: [identity], files: [file]), TestContext.Current.CancellationToken);
+        Assert.Null(result.Findings.Single(item => item.Scope == FindingScope.File).SizeMetrics.LogicalBytes);
+        Assert.Null(result.Findings.Single(item => item.Scope == FindingScope.IdentityGroup).SizeMetrics.LogicalBytes);
+        Assert.Equal(33, result.Findings.Single(item => item.Scope == FindingScope.HierarchyArea).SizeMetrics.LogicalBytes);
+    }
+
+    [Theory]
+    [InlineData("finding.reclaim.unknown", "conflict", Confidence.Unknown)]
+    [InlineData("finding.scope.file", "conflict", Confidence.Low)]
+    public void ReservedEvidenceCollisionFailsClosed(string code, string description, Confidence confidence)
+    {
+        StorageAnalysisCandidate candidate = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.File, FindingCategory.UserData, "Users\\Current\\file", 1, 1,
+            additionalEvidence: [new Evidence(code, description, confidence)]);
+        AssertInputMismatch(UniversalFindingTestData.Request(files: [candidate]));
+    }
+
     [Fact]
     public void UniversalFindingsRemainUsefulWithZeroProductRecognition()
     {
@@ -150,4 +372,17 @@ public sealed class UniversalFindingBuilderTests
         Assert.Equal(2, exported.Length);
         Assert.Contains(typeof(UniversalFindingBuilder), exported);
     }
+
+    private void AssertInputMismatch(UniversalFindingRequest request)
+    {
+        UniversalFindingResult result = builder.Build(request, TestContext.Current.CancellationToken);
+        Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
+        Assert.True(result.Reasons.HasFlag(UniversalFindingReason.InputMismatch));
+        Assert.Empty(result.Findings);
+    }
+
+    private static CategorySummary[] Summaries(
+        Func<FindingCategory, long?> deduplicated, Func<FindingCategory, long> raw) =>
+        Enum.GetValues<FindingCategory>().Select(category => new CategorySummary(category,
+            deduplicated(category), raw(category), 0, 0, 0, AnalysisQuality.Complete, AnalysisReason.None)).ToArray();
 }

@@ -1,4 +1,5 @@
 using CDriveSmartClean.Application.Analysis;
+using CDriveSmartClean.Domain;
 using CDriveSmartClean.Domain.Analysis;
 using CDriveSmartClean.Domain.Findings;
 using CDriveSmartClean.Domain.Storage;
@@ -28,7 +29,8 @@ public sealed class UniversalFindingDeterminismAndBoundsTests
     [Fact]
     public void UnknownViewDuplicateIsDeduplicatedByStableKey()
     {
-        StorageAnalysisCandidate candidate = File("unknown", 10, FindingCategory.Unknown);
+        StorageAnalysisCandidate candidate = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.File, FindingCategory.Unknown, "Mystery\\unknown", 10, 10);
         UniversalFindingResult result = builder.Build(
             UniversalFindingTestData.Request(files: [candidate], unknown: [candidate]), TestContext.Current.CancellationToken);
         Assert.Single(result.Findings);
@@ -48,6 +50,69 @@ public sealed class UniversalFindingDeterminismAndBoundsTests
         Assert.Empty(result.Findings);
     }
 
+    [Theory]
+    [InlineData("logical", false)]
+    [InlineData("logical", true)]
+    [InlineData("counts", false)]
+    [InlineData("counts", true)]
+    [InlineData("evidence", false)]
+    [InlineData("evidence", true)]
+    [InlineData("confidence", false)]
+    [InlineData("confidence", true)]
+    public void SameKeyContradictionsFailBeforeTopKInEitherOrder(string mutation, bool reverse)
+    {
+        StorageAnalysisCandidate first = File("same-key", 10);
+        StorageAnalysisCandidate second = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.File, FindingCategory.UserData, first.RelativePaths[0],
+            mutation == "logical" ? 11 : 10, 10, identity: first.ObjectIdentity,
+            confidence: mutation == "confidence" ? Confidence.Low : Confidence.High,
+            fileCount: mutation == "counts" ? 2 : 1,
+            additionalEvidence: mutation == "evidence"
+                ? [new Evidence("semantic.shared", "second", Confidence.High)]
+                : [new Evidence("semantic.shared", "first", Confidence.High)]);
+        first = UniversalFindingTestData.Candidate(AnalysisCandidateScope.File, FindingCategory.UserData,
+            first.RelativePaths[0], 10, 10, identity: first.ObjectIdentity,
+            additionalEvidence: [new Evidence("semantic.shared", "first", Confidence.High)]);
+        StorageAnalysisCandidate[] values = reverse ? [second, first] : [first, second];
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(files: values,
+            options: new UniversalFindingOptions(1, 5, 100)), TestContext.Current.CancellationToken);
+        Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
+        Assert.True(result.Reasons.HasFlag(UniversalFindingReason.InputMismatch));
+        Assert.Empty(result.Findings);
+    }
+
+    [Fact]
+    public void SameKeyCompatibleFacetsAndEvidenceMergeBeforeTopK()
+    {
+        StorageAnalysisCandidate first = File("merge", 10);
+        StorageAnalysisCandidate sparse = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.File, FindingCategory.UserData, first.RelativePaths[0], 10, 10,
+            [FindingFacet.Sparse], first.ObjectIdentity);
+        StorageAnalysisCandidate compressed = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.File, FindingCategory.UserData, first.RelativePaths[0], 10, 10,
+            [FindingFacet.Compressed], first.ObjectIdentity);
+        Finding finding = Assert.Single(builder.Build(UniversalFindingTestData.Request(
+            files: [sparse, compressed]), TestContext.Current.CancellationToken).Findings);
+        Assert.Contains(FindingFacet.Sparse, finding.Facets);
+        Assert.Contains(FindingFacet.Compressed, finding.Facets);
+    }
+
+    [Fact]
+    public void CrossViewContradictionCannotBeHiddenByPerViewTopK()
+    {
+        StorageAnalysisCandidate genuine = File("small", 1);
+        StorageAnalysisCandidate larger = File("large", 2);
+        StorageAnalysisCandidate contradiction = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.File, FindingCategory.UserData, genuine.RelativePaths[0], 99, 1,
+            identity: genuine.ObjectIdentity);
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
+            files: [genuine, larger], unknown: [contradiction],
+            options: new UniversalFindingOptions(1, 5, 100)), TestContext.Current.CancellationToken);
+        Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
+        Assert.True(result.Reasons.HasFlag(UniversalFindingReason.InputMismatch));
+        Assert.Empty(result.Findings);
+    }
+
     [Fact]
     public void PerViewAndTotalBoundsAreEnforced()
     {
@@ -57,6 +122,15 @@ public sealed class UniversalFindingDeterminismAndBoundsTests
         UniversalFindingResult result = builder.Build(
             UniversalFindingTestData.Request(files: files, options: options), TestContext.Current.CancellationToken);
         Assert.True(result.Findings.Count <= 3);
+    }
+
+    [Fact]
+    public void TopKRetainsLargestThreeItems()
+    {
+        StorageAnalysisCandidate[] files = [File("one", 1), File("three", 3), File("two", 2), File("four", 4)];
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(files: files,
+            options: new UniversalFindingOptions(3, 5, 100)), TestContext.Current.CancellationToken);
+        Assert.Equal([4L, 3L, 2L], result.Findings.Select(item => item.SizeMetrics.AllocatedBytes));
     }
 
     [Fact]
@@ -79,9 +153,7 @@ public sealed class UniversalFindingDeterminismAndBoundsTests
     [Fact]
     public void Deep2000LevelHierarchyIsTraversedIteratively()
     {
-        StorageHierarchyNode node = UniversalFindingTestData.HierarchyNode("ProgramData\\cache\\leaf", 1);
-        for (int depth = 0; depth < 2_000; depth++)
-            node = UniversalFindingTestData.HierarchyNode($"ProgramData\\cache\\n{depth:D4}", 1, [node]);
+        StorageHierarchyNode node = DeepHierarchy(2_000);
         UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
             hierarchyChildren: [node], options: new UniversalFindingOptions(25, 100, 3_000)), TestContext.Current.CancellationToken);
         Assert.NotEqual(AnalysisQuality.Unavailable, result.Quality);
@@ -91,9 +163,7 @@ public sealed class UniversalFindingDeterminismAndBoundsTests
     [Fact]
     public void HierarchyResourceLimitPublishesNoPrefix()
     {
-        StorageHierarchyNode node = UniversalFindingTestData.HierarchyNode("ProgramData\\cache\\leaf", 1);
-        for (int depth = 0; depth < 200; depth++)
-            node = UniversalFindingTestData.HierarchyNode($"ProgramData\\cache\\n{depth:D3}", 1, [node]);
+        StorageHierarchyNode node = DeepHierarchy(200);
         UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
             hierarchyChildren: [node], options: new UniversalFindingOptions(25, 100, 100)), TestContext.Current.CancellationToken);
         Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
@@ -114,4 +184,15 @@ public sealed class UniversalFindingDeterminismAndBoundsTests
         string name, long allocated, FindingCategory category = FindingCategory.UserData) =>
         UniversalFindingTestData.Candidate(AnalysisCandidateScope.File, category,
             $"Users\\Current\\{name}", allocated, allocated);
+
+    private static StorageHierarchyNode DeepHierarchy(int depth)
+    {
+        var paths = new string[depth + 1];
+        paths[0] = "ProgramData\\cache";
+        for (int index = 1; index <= depth; index++) paths[index] = $"{paths[index - 1]}\\n{index:D4}";
+        StorageHierarchyNode node = UniversalFindingTestData.HierarchyNode(paths[^1], 1);
+        for (int index = depth - 1; index >= 0; index--)
+            node = UniversalFindingTestData.HierarchyNode(paths[index], 1, [node]);
+        return node;
+    }
 }

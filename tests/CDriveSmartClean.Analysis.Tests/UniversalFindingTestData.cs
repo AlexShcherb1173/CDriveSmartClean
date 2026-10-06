@@ -26,21 +26,45 @@ internal static class UniversalFindingTestData
         AnalysisQuality analysisQuality = AnalysisQuality.Complete,
         AnalysisReason analysisReasons = AnalysisReason.None,
         UniversalFindingOptions? options = null,
-        VolumeIdentity? accountingVolume = null)
+        VolumeIdentity? accountingVolume = null,
+        IEnumerable<AllocationGroup>? allocationGroups = null,
+        IEnumerable<CategorySummary>? categorySummaries = null,
+        StorageAggregate? accountingAggregate = null,
+        AccountingReason accountingReasons = AccountingReason.None,
+        StorageClassificationContext? classificationContext = null,
+        string systemRoot = @"C:\",
+        bool deriveHierarchyNodes = true)
     {
         categoryAllocations ??= new Dictionary<FindingCategory, long?>();
-        CategorySummary[] summaries = Enum.GetValues<FindingCategory>().Select(category =>
+        CategorySummary[] summaries = categorySummaries?.ToArray() ?? Enum.GetValues<FindingCategory>().Select(category =>
         {
             bool present = categoryAllocations.TryGetValue(category, out long? allocated);
             return new CategorySummary(category, present ? allocated : 0, present ? allocated ?? 0 : 0,
                 0, present ? 1 : 0, present ? 1 : 0, analysisQuality, analysisReasons);
         }).ToArray();
         long total = categoryAllocations.Values.Where(value => value is not null).Sum(value => value!.Value);
-        var aggregate = new StorageAggregate(rawReportedAllocatedBytes: total,
+        var aggregate = accountingAggregate ?? new StorageAggregate(rawReportedAllocatedBytes: total,
             inclusiveAttributedObservedAllocatedBytes: total,
             fileCount: categoryAllocations.Count);
-        var root = new StorageHierarchyNode("", aggregate, hierarchyChildren ?? []);
-        var summary = new StorageAccountingSummary(aggregate, AccountingReason.None);
+        var childNodes = (hierarchyChildren ?? []).ToDictionary(item => item.RelativePath, StringComparer.Ordinal);
+        foreach (StorageAnalysisCandidate candidate in (hierarchy ?? []).Concat(unknown ?? [])
+                     .Where(item => deriveHierarchyNodes && item.Scope == AnalysisCandidateScope.HierarchyNode))
+        {
+            if (childNodes.ContainsKey(candidate.RelativePaths[0])) continue;
+            childNodes.Add(candidate.RelativePaths[0], new StorageHierarchyNode(candidate.RelativePaths[0],
+                new StorageAggregate(
+                    visibleLogicalMeasuredBytes: candidate.SizeEvidence.VisibleLogicalBytes ?? 0,
+                    rawReportedAllocatedBytes: candidate.SizeEvidence.RawReportedAllocatedBytes ?? 0,
+                    uncertainMeasuredAllocatedBytes: candidate.SizeEvidence.UncertainMeasuredAllocatedBytes ?? 0,
+                    inclusiveAttributedObservedAllocatedBytes:
+                        candidate.SizeEvidence.ObservedAttributedAllocatedBytes ?? 0,
+                    fileCount: candidate.FileCount,
+                    directoryCount: candidate.DirectoryCount), []));
+        }
+        StorageHierarchyNode? root = accountingReasons.HasFlag(AccountingReason.ResourceLimit) ||
+            accountingReasons.HasFlag(AccountingReason.ArithmeticOverflow)
+            ? null : new StorageHierarchyNode("", aggregate, childNodes.Values);
+        var summary = new StorageAccountingSummary(root is null ? null : aggregate, accountingReasons);
         VolumeIdentity snapshotVolume = accountingVolume ?? Volume;
         VolumeSpaceSnapshot start;
         VolumeSpaceSnapshot end;
@@ -57,7 +81,18 @@ internal static class UniversalFindingTestData
                 VolumeSpaceFailure.VolumeUnavailable);
             end = start;
         }
-        var accounting = new StorageAccountingResult(summary, root, [],
+        IEnumerable<StorageAnalysisCandidate> identityCandidates = (identities ?? []).Concat(files ?? [])
+            .Concat(unknown ?? []).Where(item => item.Scope is AnalysisCandidateScope.File or AnalysisCandidateScope.IdentityGroup);
+        AllocationGroup[] groups = allocationGroups?.ToArray() ?? identityCandidates
+            .GroupBy(item => item.ObjectIdentity!)
+            .Select(group =>
+            {
+                StorageAnalysisCandidate candidate = group.First();
+                return new AllocationGroup(candidate.ObjectIdentity!, candidate.RelativePaths,
+                    candidate.SizeEvidence.ObservedAttributedAllocatedBytes, AccountingReason.None,
+                    candidate.RelativePaths[0]);
+            }).ToArray();
+        var accounting = new StorageAccountingResult(summary, root, groups,
             new VolumeReconciliation(start, end, summary, true), true,
             new Dictionary<StorageTraversalIssueKind, long>());
         var analysis = analysisQuality == AnalysisQuality.Unavailable
@@ -65,12 +100,14 @@ internal static class UniversalFindingTestData
                 [], [], [], [], [])
             : new StorageAnalysisResult(analysisQuality, analysisReasons, summary.Quality, summary.Reasons,
                 summaries, hierarchy ?? [], identities ?? [], files ?? [], unknown ?? []);
-        return new UniversalFindingRequest(SessionId, AnalysisRequest(), analysis, accounting, options);
+        return new UniversalFindingRequest(SessionId, AnalysisRequest(classificationContext, systemRoot),
+            analysis, accounting, options);
     }
 
-    internal static StorageAnalysisRequest AnalysisRequest() => new(
-        new SystemVolumeDescriptor(Volume, @"C:\"),
-        new StorageClassificationContext(Volume, @"C:\Windows",
+    internal static StorageAnalysisRequest AnalysisRequest(
+        StorageClassificationContext? context = null, string systemRoot = @"C:\") => new(
+        new SystemVolumeDescriptor(Volume, systemRoot),
+        context ?? new StorageClassificationContext(Volume, @"C:\Windows",
             [@"C:\Program Files", @"C:\Program Files (x86)"], @"C:\ProgramData",
             @"C:\Users\Current", [@"C:\Users\Current\AppData\Local", @"C:\Users\Current\AppData\Roaming"],
             @"C:\Users\Public", @"C:\Users", []));
@@ -84,17 +121,22 @@ internal static class UniversalFindingTestData
         IEnumerable<FindingFacet>? facets = null,
         StorageObjectIdentity? identity = null,
         IEnumerable<string>? paths = null,
-        Confidence? confidence = null)
+        Confidence? confidence = null,
+        long? rawAllocatedBytes = null,
+        long? observedAllocatedBytes = null,
+        long? uncertainAllocatedBytes = null,
+        long? fileCount = null,
+        long? directoryCount = null,
+        IEnumerable<Evidence>? additionalEvidence = null)
     {
         identity ??= scope is AnalysisCandidateScope.File or AnalysisCandidateScope.IdentityGroup
             ? new StorageObjectIdentity(Volume, StableObjectId(path)) : null;
         string[] relativePaths = (paths ?? [path]).ToArray();
-        long fileCount = scope == AnalysisCandidateScope.HierarchyNode ? 2 : 1;
-        long directoryCount = scope == AnalysisCandidateScope.HierarchyNode ? 1 : 0;
         var evidence = new List<Evidence>
         {
             new("classification.test", "Deterministic test classification.", confidence ?? CategoryConfidence(category))
         };
+        evidence.AddRange(additionalEvidence ?? []);
         foreach (FindingFacet facet in facets ?? [])
         {
             string code = facet switch
@@ -108,8 +150,11 @@ internal static class UniversalFindingTestData
             evidence.Add(new Evidence(code, $"Test evidence for {facet}.", Confidence.Verified));
         }
         return new StorageAnalysisCandidate(scope, category, facets ?? [], confidence ?? CategoryConfidence(category),
-            evidence, new AnalysisSizeEvidence(logicalBytes, allocatedBytes, allocatedBytes, 0),
-            relativePaths, identity, fileCount, directoryCount);
+            evidence, new AnalysisSizeEvidence(logicalBytes, rawAllocatedBytes ?? allocatedBytes,
+                observedAllocatedBytes ?? allocatedBytes, uncertainAllocatedBytes ?? 0),
+            relativePaths, identity,
+            fileCount ?? (scope == AnalysisCandidateScope.HierarchyNode ? 2 : 1),
+            directoryCount ?? (scope == AnalysisCandidateScope.HierarchyNode ? 1 : 0));
     }
 
     internal static StorageHierarchyNode HierarchyNode(
