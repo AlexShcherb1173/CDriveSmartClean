@@ -1074,10 +1074,14 @@ independent exact logical fact for those scopes, while hierarchy logical bytes a
 validation. Observed attributed allocation is never promoted to exclusive allocation, so every F1-15 finding has
 `ExclusiveAllocatedBytes = null`. Logical and allocated values never become reclaim values. Every universal
 finding uses `ReclaimEstimate.Unknown("finding.reclaim.unknown")` with no numeric bounds.
+Candidate classification reuses the unchanged F1-14 classification engine after lexically normalizing trusted context
+roots into the system-volume root representation. If accounting provides no authoritative deduplicated allocation,
+every category deduplicated value must also be null; analysis-side path, raw, and uncertain evidence may remain.
 
 Finding scopes are CategoryAggregate, HierarchyArea, IdentityGroup, and File. Their path, identity, and count
 invariants are enforced by Domain. Evidence is ordinally code-sorted; identical same-code evidence is collapsed
-and semantic collisions are rejected. Scan-local finding IDs are UUIDv5 values derived from the scan session and
+and semantic collisions are rejected. The `finding.` evidence namespace is owned by the final-Finding builder and is
+invalid in upstream staged candidates. Scan-local finding IDs are UUIDv5 values derived from the scan session and
 versioned semantic keys, so enumeration order cannot change identity or output ordering.
 
 Risk means the risk of treating the finding as a destructive cleanup target without further deterministic
@@ -1095,8 +1099,9 @@ trusted current-user AppData or ProgramData roots. Matching uses canonical volum
 drive and GUID-volume root spellings do not change the result; it never means safe, reproducible, or owned by a known app.
 Old/Recent, product knowledge, duplicate/orphan inference, and cleanup actions remain unimplemented.
 
-Category findings are reserved first; each object/cache view validates and merges every same-key draft before
-deterministic bounded top-K retention, so a contradiction cannot disappear through set equality or truncation. The
+Category findings are reserved first; each object/cache view validates and merges every same-key draft through one
+shared semantic map before deterministic bounded top-K retention, so a cache contradiction cannot disappear through
+set equality or truncation. The
 accounting hierarchy is indexed iteratively under the resource limit and the same bounded index feeds cache matching.
 Cross-result volume,
 quality, reason, total, identity, and duplicate-key contradictions yield empty Unavailable output. Category,

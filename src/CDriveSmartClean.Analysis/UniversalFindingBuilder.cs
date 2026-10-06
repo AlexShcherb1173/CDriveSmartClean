@@ -30,7 +30,7 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
                 return Unavailable(request, reasons | UniversalFindingReason.UpstreamAnalysisUnavailable);
 
             AccountingIndexes indexes = BuildAccountingIndexes(request, cancellationToken);
-            var classifier = new DeterministicClassificationEngine(request.AnalysisRequest.ClassificationContext);
+            var classifier = new DeterministicClassificationEngine(NormalizeClassificationContext(request));
 
             bool incomplete = request.AnalysisResult.Quality == AnalysisQuality.Incomplete ||
                               request.AccountingResult.Summary.Quality != AccountingQuality.Complete ||
@@ -56,7 +56,7 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
                 validatedCandidates, drafts, cancellationToken);
             AddCandidateView(request.AnalysisResult.LargestUnknownCandidates,
                 null, request, capacity, indexes, classifier, validatedCandidates, drafts, cancellationToken);
-            AddCacheFindings(request, capacity, indexes, drafts, cancellationToken);
+            AddCacheFindings(request, capacity, indexes, validatedCandidates, drafts, cancellationToken);
 
             int remaining = request.Options.MaximumTotalFindings - categories.Count;
             if (remaining == 0)
@@ -254,6 +254,8 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         DeterministicClassificationEngine classifier)
     {
         if (!UniversalCategories.Contains(candidate.PrimaryCategory)) throw new InputMismatchException();
+        if (candidate.Evidence.Any(item => item.Code.StartsWith("finding.", StringComparison.Ordinal)))
+            throw new InputMismatchException();
         FindingScope scope;
         string key;
         long? logicalBytes;
@@ -321,6 +323,7 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         UniversalFindingRequest request,
         long? capacity,
         AccountingIndexes indexes,
+        IDictionary<string, FindingDraft> allValidated,
         IDictionary<string, FindingDraft> combined,
         CancellationToken cancellationToken)
     {
@@ -354,11 +357,13 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
             AddEvidence(evidence, ReclaimEvidence());
             AddEvidence(evidence, AllocatedEvidence());
             if (facets.Contains(FindingFacet.Large)) AddEvidence(evidence, LargeEvidence());
-            Merge(merged, new FindingDraft(
+            var draft = new FindingDraft(
                 $"hierarchy:{node.RelativePath}", FindingScope.HierarchyArea, FindingCategory.ApplicationData,
                 [node.RelativePath], null, node.Aggregate.FileCount, node.Aggregate.DirectoryCount,
                 node.Aggregate.VisibleLogicalMeasuredBytes, node.Aggregate.InclusiveAttributedObservedAllocatedBytes,
-                node.Aggregate.VisibleLogicalMeasuredBytes, facets, evidence, Confidence.Medium));
+                node.Aggregate.VisibleLogicalMeasuredBytes, facets, evidence, Confidence.Medium);
+            Merge(allValidated, draft);
+            Merge(merged, allValidated[draft.Key]);
         }
 
         var bounded = new BoundedFindingSet<FindingDraft>(
@@ -430,9 +435,6 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         if (allCandidates.Any(candidate => candidate.ObjectIdentity is { } identity &&
                                            !identity.VolumeIdentity.Equals(volume))) return false;
         if (request.AnalysisResult.Quality == AnalysisQuality.Unavailable) return true;
-        StorageAggregate? aggregate = request.AccountingResult.Summary.Aggregate;
-        if (aggregate is null) return true;
-
         long raw = 0;
         long uncertain = 0;
         long deduplicated = 0;
@@ -456,9 +458,13 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
                 return false;
             }
         }
+        if (authoritativeDeduplicated is not null && deduplicated != authoritativeDeduplicated) return false;
+
+        StorageAggregate? aggregate = request.AccountingResult.Summary.Aggregate;
+        if (aggregate is null) return true;
         if (raw != aggregate.RawReportedAllocatedBytes || uncertain != aggregate.UncertainMeasuredAllocatedBytes)
             return false;
-        return authoritativeDeduplicated is null || deduplicated == authoritativeDeduplicated;
+        return true;
     }
 
     private static UniversalFindingReason MapUpstreamReasons(UniversalFindingRequest request)
@@ -568,6 +574,37 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         FindingScope.File => "file",
         _ => "category"
     };
+
+    private static StorageClassificationContext NormalizeClassificationContext(UniversalFindingRequest request)
+    {
+        StorageClassificationContext context = request.AnalysisRequest.ClassificationContext;
+        VolumeIdentity volume = request.AnalysisRequest.SystemVolume.VolumeIdentity;
+        string systemRoot = request.AnalysisRequest.SystemVolume.RootPath;
+        if (!context.VolumeIdentity.Equals(volume) ||
+            !UniversalFindingPolicies.TryGetVolumeRelativePath(systemRoot, volume, out string systemRelative) ||
+            systemRelative.Length != 0)
+            throw new InputMismatchException();
+
+        string Normalize(string path)
+        {
+            if (!UniversalFindingPolicies.TryGetVolumeRelativePath(path, volume, out string relative))
+                throw new InputMismatchException();
+            return CombineRoot(systemRoot, relative);
+        }
+
+        string? NormalizeOptional(string? path) => path is null ? null : Normalize(path);
+
+        return new StorageClassificationContext(
+            context.VolumeIdentity,
+            Normalize(context.WindowsDirectory),
+            context.ProgramFilesRoots.Select(Normalize),
+            NormalizeOptional(context.ProgramDataRoot),
+            NormalizeOptional(context.CurrentUserProfileRoot),
+            context.CurrentUserAppDataRoots.Select(Normalize),
+            NormalizeOptional(context.PublicRoot),
+            NormalizeOptional(context.UserProfilesRoot),
+            context.UnavailableContextKeys);
+    }
 
     private static string CombineRoot(string root, string relative) =>
         root.EndsWith('\\') ? root + relative.TrimStart('\\') : root + "\\" + relative.TrimStart('\\');

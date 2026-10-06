@@ -187,6 +187,49 @@ public sealed class UniversalFindingBuilderTests
     }
 
     [Fact]
+    public void UnavailableAccountingRejectsCallerKnownCategoryDedup()
+    {
+        const long large = 3L * 1_073_741_824;
+        CategorySummary[] summaries = Summaries(
+            category => category == FindingCategory.System ? large : null,
+            category => category == FindingCategory.System ? large : 0);
+
+        AssertInputMismatch(UniversalFindingTestData.Request(
+            categorySummaries: summaries,
+            allocationGroups: [],
+            accountingReasons: AccountingReason.ResourceLimit));
+    }
+
+    [Fact]
+    public void UnavailableAccountingAllowsOnlyNonAuthoritativeCategoryEvidence()
+    {
+        CategorySummary[] summaries = Enum.GetValues<FindingCategory>().Select(category => new CategorySummary(
+            category,
+            null,
+            category == FindingCategory.System ? 10 : 0,
+            category == FindingCategory.System ? 2 : 0,
+            category == FindingCategory.System ? 1 : 0,
+            0,
+            AnalysisQuality.Incomplete,
+            AnalysisReason.UpstreamAccountingUnavailable)).ToArray();
+
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
+            categorySummaries: summaries,
+            allocationGroups: [],
+            accountingReasons: AccountingReason.ResourceLimit,
+            analysisQuality: AnalysisQuality.Incomplete,
+            analysisReasons: AnalysisReason.UpstreamAccountingUnavailable), TestContext.Current.CancellationToken);
+
+        Assert.False(result.Reasons.HasFlag(UniversalFindingReason.InputMismatch));
+        Finding finding = Assert.Single(result.Findings);
+        Assert.Equal(FindingCategory.System, finding.PrimaryCategory);
+        Assert.Null(finding.SizeMetrics.AllocatedBytes);
+        Assert.Null(finding.SizeMetrics.ExclusiveAllocatedBytes);
+        Assert.DoesNotContain(FindingFacet.Large, finding.Facets);
+        Assert.Equal(ReclaimKind.Unknown, finding.ReclaimEstimate.Kind);
+    }
+
+    [Fact]
     public void CategoryRawAndDeferredValuesMustRemainCoherent()
     {
         CategorySummary[] rawMismatch = Summaries(_ => 0,
@@ -315,8 +358,12 @@ public sealed class UniversalFindingBuilderTests
     }
 
     [Theory]
-    [InlineData("finding.reclaim.unknown", "conflict", Confidence.Unknown)]
+    [InlineData("finding.reclaim.unknown", "No deterministic reclaim amount has been established.", Confidence.Unknown)]
     [InlineData("finding.scope.file", "conflict", Confidence.Low)]
+    [InlineData("finding.size.observed_allocated", "conflict", Confidence.Verified)]
+    [InlineData("finding.facet.large", "conflict", Confidence.Verified)]
+    [InlineData("finding.cache_like.application_data_component", "conflict", Confidence.Medium)]
+    [InlineData("finding.future.reserved", "conflict", Confidence.High)]
     public void ReservedEvidenceCollisionFailsClosed(string code, string description, Confidence confidence)
     {
         StorageAnalysisCandidate candidate = UniversalFindingTestData.Candidate(

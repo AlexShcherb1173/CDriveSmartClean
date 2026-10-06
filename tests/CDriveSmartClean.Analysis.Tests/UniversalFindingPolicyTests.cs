@@ -115,11 +115,42 @@ public sealed class UniversalFindingPolicyTests
             Join(contextRoot, "Users\\Public"), Join(contextRoot, "Users"), []);
         StorageHierarchyNode node = UniversalFindingTestData.HierarchyNode(
             "Users\\Current\\AppData\\Local\\Vendor\\Cache", 10);
+        StorageAnalysisCandidate candidate = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.HierarchyNode,
+            FindingCategory.ApplicationData,
+            node.RelativePath,
+            10,
+            10,
+            fileCount: 1,
+            directoryCount: 0);
         UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
-            hierarchyChildren: [node], classificationContext: context, systemRoot: systemRoot),
+            hierarchy: [candidate], hierarchyChildren: [node], classificationContext: context,
+            systemRoot: systemRoot, deriveHierarchyNodes: false),
             TestContext.Current.CancellationToken);
+        Assert.NotEqual(AnalysisQuality.Unavailable, result.Quality);
         Finding finding = Assert.Single(result.Findings);
+        Assert.Equal(FindingCategory.ApplicationData, finding.PrimaryCategory);
         Assert.Contains(FindingFacet.CacheLike, finding.Facets);
+    }
+
+    [Fact]
+    public void SystemCandidateClassificationSupportsMixedRootRepresentation()
+    {
+        string guidRoot = @"\\?\Volume{" + UniversalFindingTestData.Volume.Id.ToString("D") + @"}\";
+        var context = new StorageClassificationContext(UniversalFindingTestData.Volume,
+            @"C:\Windows", [@"C:\Program Files"], @"C:\ProgramData", @"C:\Users\Current",
+            [@"C:\Users\Current\AppData\Local"], @"C:\Users\Public", @"C:\Users", []);
+        StorageHierarchyNode node = UniversalFindingTestData.HierarchyNode("Windows\\System32", 10);
+        StorageAnalysisCandidate candidate = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.HierarchyNode, FindingCategory.System, node.RelativePath, 10, 10,
+            fileCount: 1, directoryCount: 0);
+
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
+            hierarchy: [candidate], hierarchyChildren: [node], classificationContext: context,
+            systemRoot: guidRoot, deriveHierarchyNodes: false), TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(AnalysisQuality.Unavailable, result.Quality);
+        Assert.Equal(FindingCategory.System, Assert.Single(result.Findings).PrimaryCategory);
     }
 
     [Fact]

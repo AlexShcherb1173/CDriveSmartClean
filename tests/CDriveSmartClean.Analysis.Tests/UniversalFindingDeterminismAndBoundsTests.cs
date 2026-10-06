@@ -114,6 +114,57 @@ public sealed class UniversalFindingDeterminismAndBoundsTests
     }
 
     [Fact]
+    public void CacheDraftValidatesAgainstCandidateTruncatedByPerViewTopK()
+    {
+        const string largePath = "Program Files\\Large";
+        const string cachePath = "Users\\Current\\AppData\\Local\\Vendor\\Cache";
+        StorageHierarchyNode largeNode = UniversalFindingTestData.HierarchyNode(largePath, 20);
+        StorageHierarchyNode cacheNode = UniversalFindingTestData.HierarchyNode(cachePath, 10);
+        StorageAnalysisCandidate large = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.HierarchyNode, FindingCategory.Application, largePath, 20, 20,
+            fileCount: 1, directoryCount: 0);
+        StorageAnalysisCandidate cache = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.HierarchyNode, FindingCategory.ApplicationData, cachePath, 10, 10,
+            [FindingFacet.Sparse], fileCount: 1, directoryCount: 0);
+
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
+            hierarchy: [large, cache], hierarchyChildren: [largeNode, cacheNode], deriveHierarchyNodes: false,
+            options: new UniversalFindingOptions(1, 5, 100)), TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(AnalysisQuality.Unavailable, result.Quality);
+        Finding finding = Assert.Single(result.Findings,
+            item => item.RelativePaths.SequenceEqual([cachePath]));
+        Assert.Equal(FindingCategory.ApplicationData, finding.PrimaryCategory);
+        Assert.Contains(FindingFacet.CacheLike, finding.Facets);
+        Assert.Contains(FindingFacet.Sparse, finding.Facets);
+        Assert.Equal(Confidence.Medium, finding.Confidence);
+    }
+
+    [Fact]
+    public void CacheContradictionCannotBeHiddenByPerViewTopK()
+    {
+        const string largePath = "Program Files\\Large";
+        const string cachePath = "Users\\Current\\AppData\\Local\\Vendor\\Cache";
+        StorageHierarchyNode largeNode = UniversalFindingTestData.HierarchyNode(largePath, 20);
+        StorageHierarchyNode cacheNode = UniversalFindingTestData.HierarchyNode(cachePath, 10);
+        StorageAnalysisCandidate large = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.HierarchyNode, FindingCategory.Application, largePath, 20, 20,
+            fileCount: 1, directoryCount: 0);
+        StorageAnalysisCandidate contradictoryCache = UniversalFindingTestData.Candidate(
+            AnalysisCandidateScope.HierarchyNode, FindingCategory.ApplicationData, cachePath, 11, 10,
+            fileCount: 1, directoryCount: 0);
+
+        UniversalFindingResult result = builder.Build(UniversalFindingTestData.Request(
+            hierarchy: [large, contradictoryCache], hierarchyChildren: [largeNode, cacheNode],
+            deriveHierarchyNodes: false, options: new UniversalFindingOptions(1, 5, 100)),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
+        Assert.True(result.Reasons.HasFlag(UniversalFindingReason.InputMismatch));
+        Assert.Empty(result.Findings);
+    }
+
+    [Fact]
     public void PerViewAndTotalBoundsAreEnforced()
     {
         StorageAnalysisCandidate[] files = Enumerable.Range(0, 20)
