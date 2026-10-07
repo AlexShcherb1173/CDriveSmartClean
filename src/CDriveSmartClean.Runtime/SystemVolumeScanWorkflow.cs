@@ -95,8 +95,7 @@ public sealed class SystemVolumeScanWorkflow
 
         var result = new ProductScanResult(request.ScanSessionId, systemVolume, accountingResult,
             analysisResult, findingResult);
-        progressState.ReportPhase(ProductScanPhase.Completed);
-        cancellationToken.ThrowIfCancellationRequested();
+        progressState.ReportCompleted();
         return result;
     }
 
@@ -142,6 +141,13 @@ public sealed class SystemVolumeScanWorkflow
             Report();
         }
 
+        internal void ReportCompleted()
+        {
+            phase = ProductScanPhase.Completed;
+            phaseReported = true;
+            Report(checkCancellationAfter: false);
+        }
+
         internal void ObserveEntry(StorageEntry entry)
         {
             objectsObserved = checked(objectsObserved + 1);
@@ -156,12 +162,12 @@ public sealed class SystemVolumeScanWorkflow
             Report();
         }
 
-        private void Report()
+        private void Report(bool checkCancellationAfter = true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(new ProductScanProgress(scanSessionId, phase, objectsObserved,
                 rawReportedAllocatedBytesObserved, traversalIssuesObserved));
-            cancellationToken.ThrowIfCancellationRequested();
+            if (checkCancellationAfter) cancellationToken.ThrowIfCancellationRequested();
         }
     }
 }

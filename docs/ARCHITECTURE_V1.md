@@ -1135,8 +1135,11 @@ reclaimable, or volume-used space. No percentage, ETA, object total, or remainin
 issue progress sink retains no issue paths or objects; final issue counts come only from accounting.
 
 The same cancellation token flows through accounting, forwarding sinks, analysis completion, and finding
-construction. Cancellation and progress-observer failures propagate; no cancelled or partial product result is
-returned. Unexpected provider and programming failures also propagate. `IStorageScanner` remains legacy/unused for
-this product workflow and is neither implemented nor removed.
+construction. Cancellation remains authoritative until `Completed` publication begins. Once `Completed` is
+successfully reported synchronously, cancellation requested by that observer does not retroactively cancel the
+completed result. Exceptions thrown directly and synchronously by `IProgress<ProductScanProgress>.Report` propagate
+through `ScanAsync`; failures from asynchronously dispatched callbacks occur outside the workflow call boundary and
+cannot be propagated by `ScanAsync`. Unexpected provider and programming failures also propagate. `IStorageScanner`
+remains legacy/unused for this product workflow and is neither implemented nor removed.
 
 This document is the technical baseline for implementation and must remain consistent with `BUSINESS_LOGIC_V1_1.md` and `SECURITY_MODEL_V1.md`.

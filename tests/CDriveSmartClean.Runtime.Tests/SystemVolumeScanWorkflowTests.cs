@@ -181,12 +181,37 @@ public sealed class SystemVolumeScanWorkflowTests
     }
 
     [Fact]
+    public async Task CancellationRequestedByCompletedObserverDoesNotCancelCompletedResult()
+    {
+        var harness = new Harness { CancelOnPhase = ProductScanPhase.Completed };
+        ProductScanResult result = await harness.Run();
+        Assert.Equal(harness.SessionId, result.ScanSessionId);
+        Assert.Single(harness.Progress.Values, item => item.Phase == ProductScanPhase.Completed);
+        Assert.Equal(AnalysisQuality.Complete, result.FindingQuality);
+        Assert.NotEmpty(result.Findings);
+    }
+
+    [Fact]
     public async Task ProgressObserverFailurePropagates()
     {
         var expected = new IOException("progress");
         var harness = new Harness { ProgressFailure = expected };
         IOException actual = await Assert.ThrowsAsync<IOException>(() => harness.Run());
         Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task SynchronousCompletedObserverFailurePropagates()
+    {
+        var expected = new IOException("completed progress");
+        var harness = new Harness
+        {
+            ProgressFailure = expected,
+            ProgressFailurePhase = ProductScanPhase.Completed,
+        };
+        IOException actual = await Assert.ThrowsAsync<IOException>(() => harness.Run());
+        Assert.Same(expected, actual);
+        Assert.Single(harness.Progress.Values, item => item.Phase == ProductScanPhase.Completed);
     }
 
     private static void AssertMonotonic(IEnumerable<long> values)
@@ -214,6 +239,7 @@ public sealed class SystemVolumeScanWorkflowTests
         internal bool ForceFindingUnavailable { get; init; }
         internal ProductScanPhase? CancelOnPhase { get; init; }
         internal Exception? ProgressFailure { get; init; }
+        internal ProductScanPhase? ProgressFailurePhase { get; init; }
 
         internal Harness()
         {
@@ -223,7 +249,9 @@ public sealed class SystemVolumeScanWorkflowTests
             FindingBuilder = new SpyFindingBuilder(Order, () => ForceFindingUnavailable);
             Progress.Callback = value =>
             {
-                if (ProgressFailure is not null) throw ProgressFailure;
+                if (ProgressFailure is not null &&
+                    (ProgressFailurePhase is null || ProgressFailurePhase == value.Phase))
+                    throw ProgressFailure;
                 if (CancelOnPhase == value.Phase) Cancellation.Cancel();
             };
         }
