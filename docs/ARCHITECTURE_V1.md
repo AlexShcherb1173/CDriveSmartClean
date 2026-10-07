@@ -1055,4 +1055,56 @@ Hierarchy candidate generation uses an explicit iterative traversal; filesystem 
 call-stack frames. Candidate evidence codes are semantic identities: exact duplicates are collapsed, while a
 same-code difference in description or confidence is rejected instead of selecting an arbitrary winner.
 
+---
+
+## 38. F1-15 universal findings
+
+`UniversalFindingBuilder` is the final deterministic Domain-finding stage over the immutable F1-14 analysis and
+F1-13 accounting results. It creates `Finding` objects without rescanning, reopening paths, reading or hashing
+content, invoking native APIs, or creating cleanup actions. The stage remains useful with zero recognized
+products: System, Application, ApplicationData, UserData, and Unknown category views, significant hierarchy,
+identity and file views, generic cache-like areas, and physically large objects remain explainable without
+vendor rules or application ownership.
+
+`SizeMetrics` values are nullable and independently truthful: null is unavailable and zero is known zero.
+Category allocation uses deduplicated observed allocation. Object candidates are joined back to exact F1-13
+allocation groups or hierarchy aggregates before publication; identity, paths, allocation, counts, category, and
+classification confidence must agree. File and identity-group logical bytes are withheld because accounting has no
+independent exact logical fact for those scopes, while hierarchy logical bytes are retained only after exact aggregate
+validation. Observed attributed allocation is never promoted to exclusive allocation, so every F1-15 finding has
+`ExclusiveAllocatedBytes = null`. Logical and allocated values never become reclaim values. Every universal
+finding uses `ReclaimEstimate.Unknown("finding.reclaim.unknown")` with no numeric bounds.
+Candidate classification reuses the unchanged F1-14 classification engine after lexically normalizing trusted context
+roots into the system-volume root representation. If accounting provides no authoritative deduplicated allocation,
+every category deduplicated value must also be null; analysis-side path, raw, and uncertain evidence may remain.
+
+Finding scopes are CategoryAggregate, HierarchyArea, IdentityGroup, and File. Their path, identity, and count
+invariants are enforced by Domain. Evidence is ordinally code-sorted; identical same-code evidence is collapsed
+and semantic collisions are rejected. The `finding.` evidence namespace is owned by the final-Finding builder and is
+invalid in upstream staged candidates. Scan-local finding IDs are UUIDv5 values derived from the scan session and
+versioned semantic keys, so enumeration order cannot change identity or output ordering.
+
+Risk means the risk of treating the finding as a destructive cleanup target without further deterministic
+enrichment, action validation, and user approval; it is not risk caused by the object's existence. System is
+Critical and Protected. Application, ApplicationData, UserData, Unknown, and cache-like ApplicationData are
+High and ReviewRequired. Risk-policy confidence is Verified and remains separate from finding confidence and
+the Unknown reclaim confidence. Finding confidence begins with category/candidate confidence, takes the minimum
+of material facet confidences, and is capped at Medium for incomplete output.
+
+Large is only a physical-significance signal. Its threshold is
+`clamp(EndSnapshot.CapacityBytes / 100, 1 GiB, 16 GiB)` and compares observed attributed allocation, never
+logical size. If capacity is unavailable, Large is omitted and output is incomplete. CacheLike is a Medium-
+confidence ApplicationData heuristic only when an exact `cache` or `caches` descendant component occurs below
+trusted current-user AppData or ProgramData roots. Matching uses canonical volume-relative components, so equivalent
+drive and GUID-volume root spellings do not change the result; it never means safe, reproducible, or owned by a known app.
+Old/Recent, product knowledge, duplicate/orphan inference, and cleanup actions remain unimplemented.
+
+Category findings are reserved first; each object/cache view validates and merges every same-key draft through one
+shared semantic map before deterministic bounded top-K retention, so a cache contradiction cannot disappear through
+set equality or truncation. The
+accounting hierarchy is indexed iteratively under the resource limit and the same bounded index feeds cache matching.
+Cross-result volume,
+quality, reason, total, identity, and duplicate-key contradictions yield empty Unavailable output. Category,
+hierarchy, identity, and file sizes are overlapping explanatory views and must never be summed into net reclaim.
+
 This document is the technical baseline for implementation and must remain consistent with `BUSINESS_LOGIC_V1_1.md` and `SECURITY_MODEL_V1.md`.

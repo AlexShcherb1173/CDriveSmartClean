@@ -53,7 +53,12 @@ public sealed class FindingTests
             Guid.NewGuid(),
             Guid.NewGuid(),
             "example",
+            FindingScope.CategoryAggregate,
             FindingCategory.Unknown,
+            [],
+            null,
+            null,
+            null,
             null!,
             ValidSize(),
             ValidReclaim(),
@@ -116,7 +121,12 @@ public sealed class FindingTests
             Guid.NewGuid(),
             Guid.NewGuid(),
             "example",
+            FindingScope.CategoryAggregate,
             FindingCategory.Unknown,
+            [],
+            null,
+            null,
+            null,
             [FindingFacet.Large],
             ValidSize(),
             ValidReclaim(),
@@ -244,11 +254,104 @@ public sealed class FindingTests
             reclaimEstimate: ReclaimEstimate.Exact(1, "overclaim")));
     }
 
+    [Theory]
+    [InlineData(FindingScope.CategoryAggregate)]
+    [InlineData(FindingScope.HierarchyArea)]
+    [InlineData(FindingScope.IdentityGroup)]
+    [InlineData(FindingScope.File)]
+    public void AllFindingScopesAreAccepted(FindingScope scope)
+    {
+        Finding finding = scope switch
+        {
+            FindingScope.CategoryAggregate => CreateFinding(scope: scope),
+            FindingScope.HierarchyArea => CreateFinding(scope: scope, relativePaths: ["area"],
+                fileCount: 2, directoryCount: 1),
+            FindingScope.IdentityGroup => CreateFinding(scope: scope, relativePaths: ["b", "a"],
+                objectIdentity: Identity(), fileCount: 1, directoryCount: 0),
+            FindingScope.File => CreateFinding(scope: scope, relativePaths: ["file"],
+                objectIdentity: Identity(), fileCount: 1, directoryCount: 0),
+            _ => throw new InvalidOperationException()
+        };
+
+        Assert.Equal(scope, finding.Scope);
+    }
+
+    [Fact]
+    public void RelativePathsAreSortedDeduplicatedAndDefensivelyCopied()
+    {
+        var paths = new List<string> { "b", "a", "a" };
+        Finding finding = CreateFinding(scope: FindingScope.IdentityGroup, relativePaths: paths,
+            objectIdentity: Identity(), fileCount: 1, directoryCount: 0);
+        paths.Add("c");
+        Assert.Equal(["a", "b"], finding.RelativePaths);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(99)]
+    public void InvalidScopeIsRejected(int scope) =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => CreateFinding(scope: (FindingScope)scope));
+
+    [Fact]
+    public void CategoryScopeRejectsObjectMetadata() =>
+        Assert.Throws<ArgumentException>(() => CreateFinding(relativePaths: ["path"]));
+
+    [Fact]
+    public void HierarchyScopeRequiresOnePathAndCounts() =>
+        Assert.Throws<ArgumentException>(() => CreateFinding(scope: FindingScope.HierarchyArea,
+            relativePaths: ["area"]));
+
+    [Fact]
+    public void IdentityScopeRequiresIdentityAndTwoDistinctPaths() =>
+        Assert.Throws<ArgumentException>(() => CreateFinding(scope: FindingScope.IdentityGroup,
+            relativePaths: ["same", "same"], objectIdentity: Identity(), fileCount: 1, directoryCount: 0));
+
+    [Fact]
+    public void FileScopeRequiresExactCounts() =>
+        Assert.Throws<ArgumentException>(() => CreateFinding(scope: FindingScope.File,
+            relativePaths: ["file"], objectIdentity: Identity(), fileCount: 2, directoryCount: 0));
+
+    [Fact]
+    public void UnknownReclaimAcceptsUnknownAllocation()
+    {
+        Finding finding = CreateFinding(sizeMetrics: new SizeMetrics(null, null, null),
+            reclaimEstimate: ReclaimEstimate.Unknown("unknown"));
+        Assert.Null(finding.SizeMetrics.AllocatedBytes);
+    }
+
+    [Fact]
+    public void NumericReclaimRejectsUnknownAllocation() =>
+        Assert.Throws<ArgumentException>(() => CreateFinding(
+            sizeMetrics: new SizeMetrics(10, null, null),
+            reclaimEstimate: ReclaimEstimate.Exact(0, "numeric")));
+
+    [Fact]
+    public void EvidenceIsSortedAndIdenticalCodesAreDeduplicated()
+    {
+        Evidence duplicate = new("b", "same", Confidence.High);
+        Finding finding = CreateFinding(evidence:
+            [duplicate, new Evidence("a", "first", Confidence.Medium), duplicate]);
+        Assert.Equal(["a", "b"], finding.Evidence.Select(item => item.Code));
+    }
+
+    [Fact]
+    public void ConflictingEvidenceCodesAreRejected() =>
+        Assert.Throws<ArgumentException>(() => CreateFinding(evidence:
+        [
+            new Evidence("same", "first", Confidence.High),
+            new Evidence("same", "second", Confidence.High)
+        ]));
+
     private static Finding CreateFinding(
         Guid? id = null,
         Guid? scanSessionId = null,
         string displayName = "example",
+        FindingScope scope = FindingScope.CategoryAggregate,
         FindingCategory primaryCategory = FindingCategory.Unknown,
+        IEnumerable<string>? relativePaths = null,
+        StorageObjectIdentity? objectIdentity = null,
+        long? fileCount = null,
+        long? directoryCount = null,
         IEnumerable<FindingFacet>? facets = null,
         SizeMetrics? sizeMetrics = null,
         ReclaimEstimate? reclaimEstimate = null,
@@ -261,7 +364,12 @@ public sealed class FindingTests
             id ?? Guid.NewGuid(),
             scanSessionId ?? Guid.NewGuid(),
             displayName,
+            scope,
             primaryCategory,
+            relativePaths ?? [],
+            objectIdentity,
+            fileCount,
+            directoryCount,
             facets ?? [FindingFacet.Large],
             sizeMetrics ?? new SizeMetrics(10, 10, 10),
             reclaimEstimate ?? ReclaimEstimate.Exact(10, "measured"),
@@ -280,7 +388,12 @@ public sealed class FindingTests
             Guid.NewGuid(),
             Guid.NewGuid(),
             "example",
+            FindingScope.CategoryAggregate,
             FindingCategory.Unknown,
+            [],
+            null,
+            null,
+            null,
             [FindingFacet.Large],
             sizeMetrics,
             reclaimEstimate,
@@ -299,4 +412,7 @@ public sealed class FindingTests
 
     private static Evidence[] ValidEvidence() =>
         [new Evidence("code", "description", Confidence.High)];
+
+    private static StorageObjectIdentity Identity() =>
+        new(new VolumeIdentity(Guid.NewGuid()), Guid.NewGuid());
 }

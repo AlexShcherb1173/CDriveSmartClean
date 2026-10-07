@@ -11,7 +11,12 @@ public sealed class Finding
         Guid id,
         Guid scanSessionId,
         string displayName,
+        FindingScope scope,
         FindingCategory primaryCategory,
+        IEnumerable<string> relativePaths,
+        StorageObjectIdentity? objectIdentity,
+        long? fileCount,
+        long? directoryCount,
         IEnumerable<FindingFacet> facets,
         SizeMetrics sizeMetrics,
         ReclaimEstimate reclaimEstimate,
@@ -34,10 +39,19 @@ public sealed class Finding
 
         ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
 
+        if (!Enum.IsDefined(scope))
+        {
+            throw new ArgumentOutOfRangeException(nameof(scope));
+        }
+
         if (!Enum.IsDefined(primaryCategory))
         {
             throw new ArgumentOutOfRangeException(nameof(primaryCategory));
         }
+
+        ArgumentNullException.ThrowIfNull(relativePaths);
+        string[] paths = CopyPaths(relativePaths);
+        ValidateScope(scope, paths, objectIdentity, fileCount, directoryCount);
 
         ArgumentNullException.ThrowIfNull(facets);
         ArgumentNullException.ThrowIfNull(sizeMetrics);
@@ -45,10 +59,10 @@ public sealed class Finding
         ArgumentNullException.ThrowIfNull(riskAssessment);
 
         if (reclaimEstimate.MaximumBytes is long maximumBytes &&
-            maximumBytes > sizeMetrics.AllocatedBytes)
+            (sizeMetrics.AllocatedBytes is not long allocatedBytes || maximumBytes > allocatedBytes))
         {
             throw new ArgumentException(
-                "Maximum reclaim bytes cannot exceed the finding's allocated bytes.",
+                "Numeric reclaim requires known allocation and cannot exceed allocated bytes.",
                 nameof(reclaimEstimate));
         }
 
@@ -67,7 +81,12 @@ public sealed class Finding
         Id = id;
         ScanSessionId = scanSessionId;
         DisplayName = displayName.Trim();
+        Scope = scope;
         PrimaryCategory = primaryCategory;
+        RelativePaths = Array.AsReadOnly(paths);
+        ObjectIdentity = objectIdentity;
+        FileCount = fileCount;
+        DirectoryCount = directoryCount;
         Facets = CopyFacets(facets);
         SizeMetrics = sizeMetrics;
         ReclaimEstimate = reclaimEstimate;
@@ -83,7 +102,17 @@ public sealed class Finding
 
     public string DisplayName { get; }
 
+    public FindingScope Scope { get; }
+
     public FindingCategory PrimaryCategory { get; }
+
+    public IReadOnlyList<string> RelativePaths { get; }
+
+    public StorageObjectIdentity? ObjectIdentity { get; }
+
+    public long? FileCount { get; }
+
+    public long? DirectoryCount { get; }
 
     public IReadOnlyList<FindingFacet> Facets { get; }
 
@@ -98,6 +127,44 @@ public sealed class Finding
     public ProtectionState ProtectionState { get; }
 
     public IReadOnlyList<Evidence> Evidence { get; }
+
+    private static string[] CopyPaths(IEnumerable<string> relativePaths)
+    {
+        string[] paths = relativePaths.ToArray();
+        if (paths.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("Relative paths cannot contain null or whitespace.", nameof(relativePaths));
+        }
+
+        return paths.Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static void ValidateScope(FindingScope scope, string[] paths, StorageObjectIdentity? objectIdentity,
+        long? fileCount, long? directoryCount)
+    {
+        if (fileCount < 0) throw new ArgumentOutOfRangeException(nameof(fileCount));
+        if (directoryCount < 0) throw new ArgumentOutOfRangeException(nameof(directoryCount));
+
+        bool valid = scope switch
+        {
+            FindingScope.CategoryAggregate => paths.Length == 0 && objectIdentity is null &&
+                                              fileCount is null && directoryCount is null,
+            FindingScope.HierarchyArea => paths.Length == 1 && objectIdentity is null &&
+                                          fileCount is not null && directoryCount is not null,
+            FindingScope.IdentityGroup => paths.Length >= 2 && objectIdentity is not null &&
+                                          fileCount is not null && directoryCount is not null,
+            FindingScope.File => paths.Length == 1 && objectIdentity is not null &&
+                                 fileCount == 1 && directoryCount == 0,
+            _ => false
+        };
+
+        if (!valid)
+        {
+            throw new ArgumentException("Finding scope metadata is inconsistent.", nameof(scope));
+        }
+    }
 
     private static ReadOnlyCollection<FindingFacet> CopyFacets(IEnumerable<FindingFacet> facets)
     {
@@ -141,6 +208,18 @@ public sealed class Finding
             throw new ArgumentException("At least one evidence item is required.", nameof(evidence));
         }
 
-        return new ReadOnlyCollection<Evidence>(copy);
+        IGrouping<string, Evidence>[] groups = copy.GroupBy(item => item.Code, StringComparer.Ordinal).ToArray();
+        if (groups.Any(group => group.Skip(1).Any(item =>
+                !item.Description.Equals(group.First().Description, StringComparison.Ordinal) ||
+                item.Confidence != group.First().Confidence)))
+        {
+            throw new ArgumentException(
+                "Evidence sharing a code must be semantically identical.",
+                nameof(evidence));
+        }
+
+        return new ReadOnlyCollection<Evidence>(groups.Select(group => group.First())
+            .OrderBy(item => item.Code, StringComparer.Ordinal)
+            .ToList());
     }
 }
