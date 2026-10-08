@@ -16,6 +16,6 @@ internal sealed record FindingRow(string DisplayName, FindingCategory Category, 
             PresentationFormatter.FormatBytes(finding.SizeMetrics.LogicalBytes),
             PresentationFormatter.FormatReclaim(finding.ReclaimEstimate), finding.RiskAssessment.Level,
             finding.RiskAssessment.Confidence, finding.Confidence, finding.ProtectionState,
-            string.Join(", ", finding.Facets), string.Join("; ", finding.RelativePaths));
+            string.Join(", ", finding.Facets), PresentationFormatter.FormatPathSummary(finding.RelativePaths));
     }
 }
