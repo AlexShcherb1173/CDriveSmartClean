@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CDriveSmartClean.Application\CDriveSmartClean.Application.csproj" />
+    <ProjectReference Include="..\CDriveSmartClean.Scan\CDriveSmartClean.Scan.csproj" />
+    <ProjectReference Include="..\CDriveSmartClean.Analysis\CDriveSmartClean.Analysis.csproj" />
+    <ProjectReference Include="..\CDriveSmartClean.Platform.Windows\CDriveSmartClean.Platform.Windows.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CDriveSmartClean.Runtime.Tests" />
+  </ItemGroup>
+</Project>

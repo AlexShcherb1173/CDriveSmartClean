@@ -1107,4 +1107,39 @@ Cross-result volume,
 quality, reason, total, identity, and duplicate-key contradictions yield empty Unavailable output. Category,
 hierarchy, identity, and file sizes are overlapping explanatory views and must never be summed into net reclaim.
 
+---
+
+## 39. MVP-01 Windows product runtime
+
+`CDriveSmartClean.Runtime` is the Windows product composition root. It targets `net10.0-windows`/x64 and
+references Application, Scan, Analysis, and Platform.Windows; none of those projects references Runtime. A future
+Desktop project depends on Runtime. Runtime has no hosting, delivery, persistence, telemetry, cleanup, or other
+infrastructure dependency.
+
+`SystemVolumeScanWorkflow` composes the existing Windows providers, traversal/accounting engine, analyzer, and
+finding builder. One invocation discovers the trusted system volume and classification context, creates one analysis
+session, then creates exactly one `StorageTreeWalker`. `StorageAccountingEngine` accounts each validated entry and
+forwards that same `StorageEntry` exactly once through a progress sink to the analysis session. Analysis completes
+only after accounting has produced its final result; universal findings are built only after analysis completes. The
+workflow never rescans, buffers the complete entry stream, reopens a path, reads content, or mutates the filesystem.
+
+The immutable `ProductScanResult` carries the system-volume identity, start/end snapshots, authoritative accounting,
+reconciliation, analysis, and finding qualities/reasons, traversal completion, a defensive read-only copy of
+`StorageAccountingResult.IssueCounts`, and a defensive read-only copy of the complete F1-15 findings. Runtime does
+not reinterpret sizes, reclaim, risk, confidence, protection, evidence, residual, coverage, or unavailable states.
+Incomplete usable results remain results; unavailable finding output remains explicitly unavailable and empty.
+
+Progress reports only the ordered phase, objects observed, raw reported allocation observed, and traversal issues
+observed. Counters never decrease. Raw reported allocation is observation progress, not deduplicated, exclusive,
+reclaimable, or volume-used space. No percentage, ETA, object total, or remaining-byte estimate is exposed. The
+issue progress sink retains no issue paths or objects; final issue counts come only from accounting.
+
+The same cancellation token flows through accounting, forwarding sinks, analysis completion, and finding
+construction. Cancellation remains authoritative until `Completed` publication begins. Once `Completed` is
+successfully reported synchronously, cancellation requested by that observer does not retroactively cancel the
+completed result. Exceptions thrown directly and synchronously by `IProgress<ProductScanProgress>.Report` propagate
+through `ScanAsync`; failures from asynchronously dispatched callbacks occur outside the workflow call boundary and
+cannot be propagated by `ScanAsync`. Unexpected provider and programming failures also propagate. `IStorageScanner`
+remains legacy/unused for this product workflow and is neither implemented nor removed.
+
 This document is the technical baseline for implementation and must remain consistent with `BUSINESS_LOGIC_V1_1.md` and `SECURITY_MODEL_V1.md`.
