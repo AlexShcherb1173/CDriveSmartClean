@@ -1,0 +1,86 @@
+<Window x:Class="CDriveSmartClean.Desktop.MainWindow" x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CDriveSmartClean" Width="1180" Height="760" MinWidth="900" MinHeight="600"
+        WindowStartupLocation="CenterScreen">
+    <DockPanel Margin="16">
+        <Border DockPanel.Dock="Top" Padding="12" Margin="0,0,0,12" BorderBrush="#FFB8C7D9"
+                BorderThickness="1" CornerRadius="4" Background="#FFF3F7FB">
+            <TextBlock Text="Analysis only — CDriveSmartClean does not delete files in this version."
+                       FontWeight="SemiBold" TextWrapping="Wrap" />
+        </Border>
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+            <Button Content="Start Scan" Command="{Binding StartCommand}" MinWidth="110" Padding="12,6" />
+            <Button Content="Cancel" Command="{Binding CancelCommand}" MinWidth="90" Padding="12,6" Margin="8,0,0,0" />
+            <TextBlock Text="State:" Margin="20,0,4,0" VerticalAlignment="Center" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding ErrorMessage}" Margin="16,0,0,0" VerticalAlignment="Center"
+                       Foreground="#FF9B1C1C" TextWrapping="Wrap" />
+        </StackPanel>
+        <GroupBox DockPanel.Dock="Top" Header="Scan progress" Margin="0,0,0,12">
+            <UniformGrid Rows="2" Columns="4" Margin="10">
+                <TextBlock Text="Phase" FontWeight="SemiBold" /><TextBlock Text="{Binding ProgressPhaseText}" />
+                <TextBlock Text="Objects observed" FontWeight="SemiBold" /><TextBlock Text="{Binding ObjectsObserved}" />
+                <TextBlock Text="Raw reported allocated bytes" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding RawReportedAllocatedBytesObserved}" />
+                <TextBlock Text="Traversal issues observed" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding TraversalIssuesObserved}" />
+            </UniformGrid>
+        </GroupBox>
+        <TabControl>
+            <TabItem Header="Overview">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="12">
+                    <GroupBox Header="System volume" Margin="0,0,0,12"><UniformGrid Rows="2" Columns="4" Margin="10">
+                        <TextBlock Text="Root" FontWeight="SemiBold" /><TextBlock Text="{Binding VolumeSummary.RootPath}" />
+                        <TextBlock Text="Capacity" FontWeight="SemiBold" /><TextBlock Text="{Binding VolumeSummary.Capacity}" />
+                        <TextBlock Text="Used" FontWeight="SemiBold" /><TextBlock Text="{Binding VolumeSummary.Used}" />
+                        <TextBlock Text="Free" FontWeight="SemiBold" /><TextBlock Text="{Binding VolumeSummary.Free}" />
+                    </UniformGrid></GroupBox>
+                    <GroupBox Header="Quality and coverage" Margin="0,0,0,12">
+                        <ItemsControl ItemsSource="{Binding QualityRows}" Margin="10"><ItemsControl.ItemTemplate><DataTemplate>
+                            <Grid Margin="0,2"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/>
+                                <ColumnDefinition Width="140"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="{Binding Value}" />
+                                <TextBlock Grid.Column="2" Text="{Binding Reason}" TextWrapping="Wrap" />
+                            </Grid>
+                        </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                    </GroupBox>
+                    <GroupBox Header="Category allocation" Margin="0,0,0,12">
+                        <ItemsControl ItemsSource="{Binding CategoryRows}" Margin="10"><ItemsControl.ItemTemplate><DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="{Binding Category}" Width="180" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Allocated}" /></StackPanel>
+                        </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                    </GroupBox>
+                    <GroupBox Header="Traversal issues">
+                        <ItemsControl ItemsSource="{Binding IssueRows}" Margin="10"><ItemsControl.ItemTemplate><DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="{Binding Kind}" Width="240" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Count}" /></StackPanel>
+                        </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                    </GroupBox>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="Findings">
+                <DataGrid ItemsSource="{Binding FindingRows}" Margin="12" AutoGenerateColumns="False" IsReadOnly="True"
+                          CanUserAddRows="False" CanUserDeleteRows="False" EnableRowVirtualization="True"
+                          EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="2*" />
+                        <DataGridTextColumn Header="Category" Binding="{Binding Category}" />
+                        <DataGridTextColumn Header="Scope" Binding="{Binding Scope}" />
+                        <DataGridTextColumn Header="Allocated" Binding="{Binding Allocated}" />
+                        <DataGridTextColumn Header="Logical" Binding="{Binding Logical}" />
+                        <DataGridTextColumn Header="Reclaim" Binding="{Binding Reclaim}" />
+                        <DataGridTextColumn Header="Risk" Binding="{Binding Risk}" />
+                        <DataGridTextColumn Header="Risk confidence" Binding="{Binding RiskConfidence}" />
+                        <DataGridTextColumn Header="Finding confidence" Binding="{Binding Confidence}" />
+                        <DataGridTextColumn Header="Protection" Binding="{Binding ProtectionState}" />
+                        <DataGridTextColumn Header="Facets" Binding="{Binding Facets}" Width="2*" />
+                        <DataGridTextColumn Header="Path" Binding="{Binding RelativePathSummary}" Width="2*" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>
