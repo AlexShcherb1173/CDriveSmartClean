@@ -1,18 +1,25 @@
-name: CI
+name: Capacity
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  validate:
+    name: capacity-${{ matrix.name }}
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: NOTEWS
+            test: NoteWsScaleCompletesCompactProductionWorkflow
+          - name: PUBLIC_TARGET
+            test: PublicTargetCompletesCompactProductionWorkflow
 
     steps:
       - name: Checkout
@@ -34,7 +41,7 @@ jobs:
           $hostSection = [regex]::Match(($dotnetInfo -join "`n"), '(?m)^Host:\r?\n(?<host>(?:[ \t]+[^\r\n]*\r?\n)+)')
           $architecture = [regex]::Match($hostSection.Groups['host'].Value, '(?m)^[ \t]+Architecture:[ \t]+(?<architecture>\S+)[ \t]*$')
           if (-not $hostSection.Success -or -not $architecture.Success -or $architecture.Groups['architecture'].Value -ne 'x64') {
-            throw "F1-11 native traversal requires an x64 .NET host; Host Architecture was absent or not x64."
+            throw "Capacity validation requires an x64 .NET host; Host Architecture was absent or not x64."
           }
           Write-Output "Verified .NET Host Architecture: x64"
 
@@ -44,8 +51,10 @@ jobs:
       - name: Build
         run: dotnet build CDriveSmartClean.sln --configuration Release --no-restore
 
-      - name: Test
-        run: dotnet test CDriveSmartClean.sln --configuration Release --no-build --filter "Category!=Capacity"
-
-      - name: Verify formatting
-        run: dotnet format CDriveSmartClean.sln --verify-no-changes --no-restore
+      - name: Run isolated capacity case
+        run: >
+          dotnet test tests/CDriveSmartClean.Runtime.Tests/CDriveSmartClean.Runtime.Tests.csproj
+          --configuration Release
+          --no-build
+          --filter "FullyQualifiedName~CDriveSmartClean.Runtime.Tests.LargeVolumeCapacityTests.${{ matrix.test }}"
+          --logger "console;verbosity=detailed"
