@@ -38,7 +38,7 @@ public sealed class CompactAccountingStateTests
 
         Assert.Equal(2, aliasLedger.ExceptionalIdentityPathEdgeCount);
         Assert.Equal(0, aliasLedger.ExceptionalPathIdentityEdgeCount);
-        AllocationGroup aliasGroup = Assert.Single(aliasLedger.Finish(CancellationToken.None).Groups);
+        AllocationGroup aliasGroup = Assert.Single(aliasLedger.Finish(CancellationToken.None).Snapshot.CreateAllocationGroups());
         Assert.Equal(["one", "three", "two"], aliasGroup.Paths);
 
         var conflictLedger = Ledger();
@@ -47,7 +47,7 @@ public sealed class CompactAccountingStateTests
 
         Assert.Equal(0, conflictLedger.ExceptionalIdentityPathEdgeCount);
         Assert.Equal(1, conflictLedger.ExceptionalPathIdentityEdgeCount);
-        Assert.All(conflictLedger.Finish(CancellationToken.None).Groups,
+        Assert.All(conflictLedger.Finish(CancellationToken.None).Snapshot.CreateAllocationGroups(),
             group => Assert.True(group.Reasons.HasFlag(AccountingReason.ConflictingPathEvidence)));
     }
 
@@ -62,7 +62,7 @@ public sealed class CompactAccountingStateTests
 
         Assert.Equal(0, ledger.ExceptionalIdentityPathEdgeCount);
         Assert.Equal(0, ledger.ExceptionalPathIdentityEdgeCount);
-        AllocationGroup group = Assert.Single(ledger.Finish(CancellationToken.None).Groups);
+        AllocationGroup group = Assert.Single(ledger.Finish(CancellationToken.None).Snapshot.CreateAllocationGroups());
         Assert.True(group.Reasons.HasFlag(AccountingReason.ConflictingPathEvidence));
         Assert.Null(group.EligibleReportedAllocatedBytes);
     }
@@ -103,10 +103,10 @@ public sealed class CompactAccountingStateTests
             ledger.Add(harness.Entry(path, identity), path);
         }
 
-        AllocationGroup group = Assert.Single(ledger.Finish(CancellationToken.None).Groups);
+        Assert.Equal(1_999, ledger.ExceptionalIdentityPathEdgeCount);
+        AllocationGroup group = Assert.Single(ledger.Finish(CancellationToken.None).Snapshot.CreateAllocationGroups());
 
         Assert.Equal(2_000, group.Paths.Count);
-        Assert.Equal(1_999, ledger.ExceptionalIdentityPathEdgeCount);
         Assert.Equal(string.Empty, group.AttributionPath);
     }
 

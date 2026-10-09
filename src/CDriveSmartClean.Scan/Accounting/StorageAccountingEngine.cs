@@ -44,11 +44,11 @@ public sealed class StorageAccountingEngine
         {
             await walker.WalkAsync(systemVolume, session, session, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            var (root, groups) = session.Finish(cancellationToken);
+            var (root, snapshot) = session.Finish(cancellationToken);
             VolumeSpaceSnapshot end = Snapshot(systemVolume);
             cancellationToken.ThrowIfCancellationRequested();
             var summary = new StorageAccountingSummary(root?.Aggregate, session.Reasons);
-            return new StorageAccountingResult(summary, root, groups,
+            return new StorageAccountingResult(summary, root, snapshot,
                 new VolumeReconciliation(start, end, summary, true), true, session.Issues);
         }
         finally
@@ -120,7 +120,7 @@ public sealed class StorageAccountingEngine
             await issueSink.WriteAsync(issue, cancellationToken).ConfigureAwait(false);
         }
 
-        internal (StorageHierarchyNode? Root, AllocationGroup[] Groups) Finish(CancellationToken token)
+        internal (StorageHierarchyNode? Root, CompactAccountingSnapshot? Snapshot) Finish(CancellationToken token)
         {
             if (ledger is not null)
             {
@@ -133,7 +133,7 @@ public sealed class StorageAccountingEngine
                 catch (StorageIdentityLedger.ResourceLimitException) { Disable(AccountingReason.ResourceLimit); }
                 catch (OverflowException) { Disable(AccountingReason.ArithmeticOverflow); }
             }
-            return (null, []);
+            return (null, null);
         }
 
         private void Disable(AccountingReason reason)

@@ -100,6 +100,7 @@ internal sealed class StorageHierarchyAccumulator
     }
 
     internal string Path(int node) => nodes[node].Path;
+    internal bool IsValidNode(int node) => (uint)node < (uint)nodes.Count;
 
     internal void AddValue(int node, int field, long value)
     {

@@ -5,4 +5,9 @@
   <ItemGroup>
     <ProjectReference Include="..\CDriveSmartClean.Domain\CDriveSmartClean.Domain.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CDriveSmartClean.Analysis" />
+    <InternalsVisibleTo Include="CDriveSmartClean.Scan" />
+    <InternalsVisibleTo Include="CDriveSmartClean.Scan.Tests" />
+  </ItemGroup>
 </Project>

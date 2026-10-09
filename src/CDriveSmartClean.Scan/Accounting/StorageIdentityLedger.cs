@@ -27,8 +27,9 @@ internal sealed class StorageIdentityLedger
         internal bool Conflict;
     }
 
-    private struct IdentityRecord(Evidence evidence)
+    private struct IdentityRecord(StorageObjectIdentity identity, Evidence evidence)
     {
+        internal readonly StorageObjectIdentity Identity = identity;
         internal readonly Evidence Evidence = evidence;
         internal PathId SinglePath;
         internal int AdditionalPathHead = -1;
@@ -49,14 +50,15 @@ internal sealed class StorageIdentityLedger
     private const long LegacyAssociationCharge = 128;
 
     private readonly StorageAccountingOptions options;
-    private readonly Dictionary<string, PathId> paths = new(StringComparer.Ordinal);
-    private readonly List<PathRecord> pathRecords = [];
-    private readonly Dictionary<StorageObjectIdentity, IdentityId> identities = [];
-    private readonly List<IdentityRecord> identityRecords = [];
-    private readonly List<PathEdge> additionalIdentityPaths = [];
-    private readonly List<IdentityEdge> additionalPathIdentities = [];
-    private readonly StorageHierarchyAccumulator hierarchy;
+    private Dictionary<string, PathId> paths = new(StringComparer.Ordinal);
+    private List<PathRecord> pathRecords = [];
+    private Dictionary<StorageObjectIdentity, IdentityId> identities = [];
+    private List<IdentityRecord> identityRecords = [];
+    private List<PathEdge> additionalIdentityPaths = [];
+    private List<IdentityEdge> additionalPathIdentities = [];
+    private StorageHierarchyAccumulator hierarchy;
     private long charged;
+    private bool sealedState;
 
     internal AccountingReason Reasons { get; private set; }
     internal long ChargedState => charged;
@@ -64,6 +66,9 @@ internal sealed class StorageIdentityLedger
     internal int IdentityCount => identityRecords.Count;
     internal int ExceptionalIdentityPathEdgeCount => additionalIdentityPaths.Count;
     internal int ExceptionalPathIdentityEdgeCount => additionalPathIdentities.Count;
+    internal bool TraversalStateReleased => sealedState && paths.Count == 0 && pathRecords.Count == 0 &&
+        identities.Count == 0 && identityRecords.Count == 0 && additionalIdentityPaths.Count == 0 &&
+        additionalPathIdentities.Count == 0 && hierarchy is null;
 
     internal StorageIdentityLedger(StorageAccountingOptions options)
     {
@@ -93,6 +98,7 @@ internal sealed class StorageIdentityLedger
 
     internal void Add(StorageEntry entry, string relative)
     {
+        if (sealedState) throw new InvalidOperationException("The accounting ledger is sealed.");
         var evidence = new Evidence(entry.ObjectIdentity, entry.Measurement, entry.ObjectKind, entry.ReparseKind, entry.Attributes);
         PathId pathId = GetOrAddPath(relative, evidence, entry.ObjectKind);
         PathRecord path = pathRecords[pathId.Value];
@@ -143,7 +149,7 @@ internal sealed class StorageIdentityLedger
         if (identityRecords.Count >= options.MaximumIdentities) throw new ResourceLimitException();
         Charge(IdentityRecordCharge);
         identityId = new IdentityId(identityRecords.Count);
-        identityRecords.Add(new IdentityRecord(evidence));
+        identityRecords.Add(new IdentityRecord(identity, evidence));
         identities.Add(identity, identityId);
         return identityId;
     }
@@ -214,13 +220,25 @@ internal sealed class StorageIdentityLedger
         return reasons;
     }
 
-    internal (StorageHierarchyNode Root, AllocationGroup[] Groups) Finish(CancellationToken token)
+    internal (StorageHierarchyNode Root, CompactAccountingSnapshot Snapshot) Finish(CancellationToken token)
     {
-        var groups = new List<AllocationGroup>(identityRecords.Count);
-        foreach ((StorageObjectIdentity identity, IdentityId identityId) in identities)
+        if (sealedState) throw new InvalidOperationException("The accounting ledger is sealed.");
+        token.ThrowIfCancellationRequested();
+        int associationCount = 0;
+        foreach (IdentityRecord identity in identityRecords)
+            associationCount = checked(associationCount + identity.PathCount);
+        Charge(CompactAccountingSnapshot.SealCharge(pathRecords.Count, identityRecords.Count, associationCount));
+        var pathFacts = new CompactAccountingSnapshot.PathFact[pathRecords.Count];
+        var identityFacts = new CompactAccountingSnapshot.IdentityFact[identityRecords.Count];
+        var identityPaths = new int[associationCount];
+        var pathIdentities = new int[associationCount];
+
+        int identityPathOffset = 0;
+        for (int identityIndex = 0; identityIndex < identityRecords.Count; identityIndex++)
         {
             token.ThrowIfCancellationRequested();
-            IdentityRecord group = identityRecords[identityId.Value];
+            IdentityRecord group = identityRecords[identityIndex];
+            if (group.PathCount <= 0) throw new InvalidOperationException("Identity has no associated path.");
             int lca = pathRecords[group.SinglePath.Value].Parent;
             for (int edge = group.AdditionalPathHead; edge >= 0; edge = additionalIdentityPaths[edge].Next)
             {
@@ -228,6 +246,7 @@ internal sealed class StorageIdentityLedger
                 PathId pathId = additionalIdentityPaths[edge].Path;
                 lca = hierarchy.CommonAncestor(lca, pathRecords[pathId.Value].Parent, token);
             }
+            if (!hierarchy.IsValidNode(lca)) throw new InvalidOperationException("Invalid attribution node.");
 
             bool conflict = (group.Reasons &
                 (AccountingReason.ConflictingIdentityEvidence | AccountingReason.ConflictingPathEvidence)) != 0;
@@ -236,40 +255,110 @@ internal sealed class StorageIdentityLedger
             long? allocation = group.Reasons == AccountingReason.None ? group.Evidence.Measurement.ReportedAllocatedBytes : null;
             if (allocation is { } bytes) hierarchy.AddValue(lca, 3, bytes);
             Reasons |= group.Reasons;
-            Charge(checked(256L + 32L * group.PathCount));
-            groups.Add(new AllocationGroup(identity, Paths(group), allocation, group.Reasons, hierarchy.Path(lca)));
+            int start = identityPathOffset;
+            CopyIdentityPaths(group, identityPaths, ref identityPathOffset);
+            identityFacts[identityIndex] = new CompactAccountingSnapshot.IdentityFact(group.Identity,
+                group.Evidence.Measurement, group.Evidence.Kind, group.Evidence.Reparse, group.Evidence.Attributes,
+                group.Reasons, hierarchy.Path(lca), start, group.PathCount);
         }
 
-        foreach (PathRecord path in pathRecords)
+        int pathIdentityOffset = 0;
+        for (int pathIndex = 0; pathIndex < pathRecords.Count; pathIndex++)
         {
             token.ThrowIfCancellationRequested();
-            if (path.Conflict) continue;
+            PathRecord path = pathRecords[pathIndex];
             Evidence evidence = path.Evidence;
-            AccountingReason reasons = Eligibility(evidence);
-            if (path.IdentityCount != 0) reasons |= identityRecords[path.SingleIdentity.Value].Reasons;
-            Reasons |= reasons;
-            if (evidence.Kind == StorageObjectKind.File) hierarchy.AddValue(path.Node, 5, 1);
-            if (evidence.Kind == StorageObjectKind.Directory) hierarchy.AddValue(path.Node, 6, 1);
-            if (evidence.Reparse != ReparseKind.None) hierarchy.AddValue(path.Node, 7, 1);
-            if (evidence.Identity is null) hierarchy.AddValue(path.Node, 11, 1);
-            int availability = evidence.Measurement.Availability == StorageMeasurementAvailability.Available ? 8 :
-                evidence.Measurement.Availability == StorageMeasurementAvailability.Unavailable ? 9 : 10;
-            hierarchy.AddValue(path.Node, availability, 1);
-            if (availability == 8)
+            if (!hierarchy.IsValidNode(path.Parent) || !hierarchy.IsValidNode(path.Node))
+                throw new InvalidOperationException("Invalid path hierarchy node.");
+            if (!path.Conflict)
             {
-                hierarchy.AddValue(path.Node, 0, evidence.Measurement.LogicalBytes!.Value);
-                hierarchy.AddValue(path.Node, 1, evidence.Measurement.ReportedAllocatedBytes!.Value);
-                if (reasons != AccountingReason.None)
-                    hierarchy.AddValue(path.Node, 2, evidence.Measurement.ReportedAllocatedBytes.Value);
+                AccountingReason reasons = Eligibility(evidence);
+                if (path.IdentityCount != 0) reasons |= identityRecords[path.SingleIdentity.Value].Reasons;
+                Reasons |= reasons;
+                if (evidence.Kind == StorageObjectKind.File) hierarchy.AddValue(path.Node, 5, 1);
+                if (evidence.Kind == StorageObjectKind.Directory) hierarchy.AddValue(path.Node, 6, 1);
+                if (evidence.Reparse != ReparseKind.None) hierarchy.AddValue(path.Node, 7, 1);
+                if (evidence.Identity is null) hierarchy.AddValue(path.Node, 11, 1);
+                int availability = evidence.Measurement.Availability == StorageMeasurementAvailability.Available ? 8 :
+                    evidence.Measurement.Availability == StorageMeasurementAvailability.Unavailable ? 9 : 10;
+                hierarchy.AddValue(path.Node, availability, 1);
+                if (availability == 8)
+                {
+                    hierarchy.AddValue(path.Node, 0, evidence.Measurement.LogicalBytes!.Value);
+                    hierarchy.AddValue(path.Node, 1, evidence.Measurement.ReportedAllocatedBytes!.Value);
+                    if (reasons != AccountingReason.None)
+                        hierarchy.AddValue(path.Node, 2, evidence.Measurement.ReportedAllocatedBytes.Value);
+                }
             }
+            int start = pathIdentityOffset;
+            CopyPathIdentities(path, pathIdentities, ref pathIdentityOffset);
+            pathFacts[pathIndex] = new CompactAccountingSnapshot.PathFact(path.Path, evidence.Measurement,
+                evidence.Kind, evidence.Reparse, evidence.Attributes, path.Conflict, start, path.IdentityCount);
         }
-        return (hierarchy.Finish(token), groups.ToArray());
+        if (identityPathOffset != associationCount || pathIdentityOffset != associationCount)
+            throw new InvalidOperationException("Association count contradiction.");
+
+        var snapshot = new CompactAccountingSnapshot(pathFacts, identityFacts, identityPaths, pathIdentities, token);
+        StorageHierarchyNode root = hierarchy.Finish(token);
+        ReleaseTraversalState();
+        return (root, snapshot);
     }
 
-    private IEnumerable<string> Paths(IdentityRecord identity)
+    private void CopyIdentityPaths(IdentityRecord identity, int[] destination, ref int offset)
     {
-        yield return pathRecords[identity.SinglePath.Value].Path;
-        for (int edge = identity.AdditionalPathHead; edge >= 0; edge = additionalIdentityPaths[edge].Next)
-            yield return pathRecords[additionalIdentityPaths[edge].Path.Value].Path;
+        if ((uint)identity.SinglePath.Value >= (uint)pathRecords.Count)
+            throw new InvalidOperationException("Invalid primary path association.");
+        destination[offset++] = identity.SinglePath.Value;
+        int remaining = identity.PathCount - 1;
+        int edge = identity.AdditionalPathHead;
+        while (remaining-- > 0)
+        {
+            if ((uint)edge >= (uint)additionalIdentityPaths.Count)
+                throw new InvalidOperationException("Invalid identity/path edge.");
+            PathEdge value = additionalIdentityPaths[edge];
+            if ((uint)value.Path.Value >= (uint)pathRecords.Count)
+                throw new InvalidOperationException("Invalid identity/path target.");
+            destination[offset++] = value.Path.Value;
+            edge = value.Next;
+        }
+        if (edge != -1) throw new InvalidOperationException("Identity path count contradiction.");
+    }
+
+    private void CopyPathIdentities(PathRecord path, int[] destination, ref int offset)
+    {
+        if (path.IdentityCount == 0)
+        {
+            if (path.AdditionalIdentityHead != -1)
+                throw new InvalidOperationException("Identity edge exists without an association.");
+            return;
+        }
+        if ((uint)path.SingleIdentity.Value >= (uint)identityRecords.Count)
+            throw new InvalidOperationException("Invalid primary identity association.");
+        destination[offset++] = path.SingleIdentity.Value;
+        int remaining = path.IdentityCount - 1;
+        int edge = path.AdditionalIdentityHead;
+        while (remaining-- > 0)
+        {
+            if ((uint)edge >= (uint)additionalPathIdentities.Count)
+                throw new InvalidOperationException("Invalid path/identity edge.");
+            IdentityEdge value = additionalPathIdentities[edge];
+            if ((uint)value.Identity.Value >= (uint)identityRecords.Count)
+                throw new InvalidOperationException("Invalid path/identity target.");
+            destination[offset++] = value.Identity.Value;
+            edge = value.Next;
+        }
+        if (edge != -1) throw new InvalidOperationException("Path identity count contradiction.");
+    }
+
+    private void ReleaseTraversalState()
+    {
+        paths = new Dictionary<string, PathId>(StringComparer.Ordinal);
+        pathRecords = [];
+        identities = [];
+        identityRecords = [];
+        additionalIdentityPaths = [];
+        additionalPathIdentities = [];
+        hierarchy = null!;
+        sealedState = true;
     }
 }
