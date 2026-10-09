@@ -1,4 +1,5 @@
 using CDriveSmartClean.Application.Analysis;
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Observations;
@@ -106,9 +107,10 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         {
             return Unavailable(request, reasons | UniversalFindingReason.InputMismatch);
         }
-        catch (ResourceLimitException)
+        catch (ResourceLimitException exception)
         {
-            return Unavailable(request, reasons | UniversalFindingReason.ResourceLimit);
+            return Unavailable(request, reasons | UniversalFindingReason.ResourceLimit,
+                exception.Diagnostic);
         }
         catch (OverflowException)
         {
@@ -163,7 +165,8 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         {
             cancellationToken.ThrowIfCancellationRequested();
             groupCount = checked(groupCount + 1);
-            if (groupCount > request.Options.MaximumHierarchyNodes) throw new ResourceLimitException();
+            if (groupCount > request.Options.MaximumHierarchyNodes)
+                throw HierarchyLimit(request.Options.MaximumHierarchyNodes, groupCount);
             if (!group.Identity.VolumeIdentity.Equals(volume) || !groups.TryAdd(group.Identity, group) ||
                 group.Paths.Any(path => !UniversalFindingPolicies.IsCanonicalRelativePath(path)))
                 throw new InputMismatchException();
@@ -180,7 +183,8 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         {
             cancellationToken.ThrowIfCancellationRequested();
             visited = checked(visited + 1);
-            if (visited > request.Options.MaximumHierarchyNodes) throw new ResourceLimitException();
+            if (visited > request.Options.MaximumHierarchyNodes)
+                throw HierarchyLimit(request.Options.MaximumHierarchyNodes, visited);
             string path = item.Node.RelativePath;
             if (path.Length != 0 && (!UniversalFindingPolicies.IsCanonicalRelativePath(path) ||
                 !UniversalFindingPolicies.IsDescendantPath(path, item.Parent)))
@@ -230,7 +234,8 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         {
             cancellationToken.ThrowIfCancellationRequested();
             visited = checked(visited + 1);
-            if (visited > request.Options.MaximumHierarchyNodes) throw new ResourceLimitException();
+            if (visited > request.Options.MaximumHierarchyNodes)
+                throw HierarchyLimit(request.Options.MaximumHierarchyNodes, visited);
             string path = item.Node.RelativePath;
             if (path.Length != 0 && (!UniversalFindingPolicies.IsCanonicalRelativePath(path) ||
                 !UniversalFindingPolicies.IsDescendantPath(path, item.Parent)))
@@ -737,9 +742,14 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
     }
 
     private static UniversalFindingResult Unavailable(
-        UniversalFindingRequest request, UniversalFindingReason reasons) =>
+        UniversalFindingRequest request, UniversalFindingReason reasons,
+        ResourceLimitDiagnostic? resourceLimitDiagnostic = null) =>
         new(AnalysisQuality.Unavailable, reasons, request.AnalysisResult.Quality,
-            request.AnalysisResult.Reasons, []);
+            request.AnalysisResult.Reasons, [], resourceLimitDiagnostic);
+
+    private static ResourceLimitException HierarchyLimit(int configuredLimit, long attempted) =>
+        new(new ResourceLimitDiagnostic(ResourceLimitStage.Findings,
+            ResourceLimitDimension.MaximumHierarchyNodes, configuredLimit, attempted));
 
     private static void Merge(IDictionary<string, FindingDraft> values, FindingDraft candidate)
     {
@@ -947,5 +957,8 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
     }
 
     private sealed class InputMismatchException : Exception;
-    private sealed class ResourceLimitException : Exception;
+    private sealed class ResourceLimitException(ResourceLimitDiagnostic diagnostic) : Exception
+    {
+        internal ResourceLimitDiagnostic Diagnostic { get; } = diagnostic;
+    }
 }

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Domain.Storage;
 
@@ -29,7 +30,8 @@ public sealed class StorageAccountingResult
 
     internal StorageAccountingResult(StorageAccountingSummary summary, StorageHierarchyNode? root,
         CompactAccountingSnapshot? compactSnapshot, VolumeReconciliation reconciliation,
-        bool traversalCompleted, IReadOnlyDictionary<StorageTraversalIssueKind, long> issueCounts)
+        bool traversalCompleted, IReadOnlyDictionary<StorageTraversalIssueKind, long> issueCounts,
+        ResourceLimitDiagnostic? resourceLimitDiagnostic = null)
     {
         ArgumentNullException.ThrowIfNull(summary);
         ArgumentNullException.ThrowIfNull(reconciliation);
@@ -38,6 +40,7 @@ public sealed class StorageAccountingResult
             throw new ArgumentException("Unavailable accounting has no authoritative hierarchy.");
         if ((root is null) != (compactSnapshot is null))
             throw new ArgumentException("Authoritative accounting requires a compact snapshot.", nameof(compactSnapshot));
+        ValidateDiagnostic(summary, resourceLimitDiagnostic);
         Summary = summary;
         Root = root;
         CompactSnapshot = compactSnapshot;
@@ -47,6 +50,7 @@ public sealed class StorageAccountingResult
         Reconciliation = reconciliation;
         TraversalCompleted = traversalCompleted;
         IssueCounts = CopyIssueCounts(issueCounts);
+        ResourceLimitDiagnostic = resourceLimitDiagnostic;
     }
     public StorageAccountingSummary Summary { get; }
     public StorageHierarchyNode? Root { get; }
@@ -55,6 +59,7 @@ public sealed class StorageAccountingResult
     public bool TraversalCompleted { get; }
     public IReadOnlyDictionary<StorageTraversalIssueKind, long> IssueCounts { get; }
     internal CompactAccountingSnapshot? CompactSnapshot { get; }
+    internal ResourceLimitDiagnostic? ResourceLimitDiagnostic { get; }
     internal int ProjectedAllocationGroupCount =>
         (AllocationGroups as CompactAccountingSnapshot.CompactAllocationGroupList)?.MaterializedCount ?? AllocationGroups.Count;
 
@@ -69,5 +74,15 @@ public sealed class StorageAccountingResult
             counts.Add(pair.Key, pair.Value);
         }
         return new ReadOnlyDictionary<StorageTraversalIssueKind, long>(counts);
+    }
+
+    private static void ValidateDiagnostic(StorageAccountingSummary summary,
+        ResourceLimitDiagnostic? resourceLimitDiagnostic)
+    {
+        if (resourceLimitDiagnostic is null) return;
+        if (resourceLimitDiagnostic.Stage != ResourceLimitStage.Accounting ||
+            !summary.Reasons.HasFlag(AccountingReason.ResourceLimit))
+            throw new ArgumentException("Accounting diagnostic requires a direct accounting resource limit.",
+                nameof(resourceLimitDiagnostic));
     }
 }

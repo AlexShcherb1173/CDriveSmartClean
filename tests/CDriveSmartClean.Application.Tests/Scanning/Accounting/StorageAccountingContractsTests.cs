@@ -23,10 +23,10 @@ public sealed class StorageAccountingContractsTests
     public void DefaultsAndPortableProviderContract()
     {
         var options = new StorageAccountingOptions();
-        Assert.Equal(1_000_000, options.MaximumIdentities);
-        Assert.Equal(1_000_000, options.MaximumDistinctPaths);
-        Assert.Equal(100_000, options.MaximumDirectories);
-        Assert.Equal(512L * 1024 * 1024, options.AccountingStateBudget);
+        Assert.Equal(1_500_000, options.MaximumIdentities);
+        Assert.Equal(1_500_000, options.MaximumDistinctPaths);
+        Assert.Equal(250_000, options.MaximumDirectories);
+        Assert.Equal(1536L * 1024 * 1024, options.AccountingStateBudget);
         var method = Assert.Single(typeof(IVolumeSpaceProvider).GetMethods());
         Assert.Equal(typeof(VolumeSpaceSnapshot), method.ReturnType);
         Assert.Equal(typeof(SystemVolumeDescriptor), Assert.Single(method.GetParameters()).ParameterType);

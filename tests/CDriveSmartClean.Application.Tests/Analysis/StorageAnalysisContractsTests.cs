@@ -18,8 +18,8 @@ public sealed class StorageAnalysisContractsTests
     public void OptionsHaveBoundedDefaults()
     {
         var options = new StorageAnalysisOptions();
-        Assert.Equal(1_000_000, options.MaximumPathStates);
-        Assert.Equal(1_000_000, options.MaximumIdentityStates);
+        Assert.Equal(1_500_000, options.MaximumPathStates);
+        Assert.Equal(1_500_000, options.MaximumIdentityStates);
         Assert.Equal(100, options.CandidateLimit);
         Assert.Equal(256L * 1024 * 1024, options.AnalysisStateBudget);
     }

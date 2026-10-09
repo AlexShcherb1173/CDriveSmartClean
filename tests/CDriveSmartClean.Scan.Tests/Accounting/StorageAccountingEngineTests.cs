@@ -1,3 +1,4 @@
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Identity;
@@ -68,6 +69,96 @@ public sealed class StorageAccountingEngineTests
         Assert.Null(result.Summary.DeduplicatedObservedAllocatedBytes);
         Assert.Null(result.Reconciliation.ObservedCoveragePercent);
         Assert.True(result.Summary.Reasons.HasFlag(AccountingReason.ResourceLimit));
+        ResourceLimitDiagnostic diagnostic = Assert.IsType<ResourceLimitDiagnostic>(
+            result.ResourceLimitDiagnostic);
+        Assert.Equal(ResourceLimitStage.Accounting, diagnostic.Stage);
+        Assert.Equal(guard switch
+        {
+            0 => ResourceLimitDimension.MaximumIdentities,
+            1 => ResourceLimitDimension.MaximumDistinctPaths,
+            2 => ResourceLimitDimension.MaximumDirectories,
+            _ => ResourceLimitDimension.AccountingStateBudget,
+        }, diagnostic.Dimension);
+        Assert.Equal(1, diagnostic.ConfiguredLimit);
+        Assert.Equal(guard == 3 ? 256 : 2, diagnostic.ObservedOrAttemptedValue);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PathAndIdentityCountLimitAcceptsLimitAndRejectsLimitPlusOne(bool identityLimit)
+    {
+        var accepted = new AccountingHarness();
+        accepted.Entries = [accepted.Entry("a", accepted.Id()), accepted.Entry("b", accepted.Id())];
+        StorageAccountingOptions options = identityLimit
+            ? new StorageAccountingOptions(maximumIdentities: 2)
+            : new StorageAccountingOptions(maximumDistinctPaths: 2);
+        StorageAccountingResult acceptedResult = await accepted.Run(options);
+        Assert.NotNull(acceptedResult.Root);
+        Assert.Null(acceptedResult.ResourceLimitDiagnostic);
+
+        var rejected = new AccountingHarness();
+        rejected.Entries =
+        [
+            rejected.Entry("a", rejected.Id()),
+            rejected.Entry("b", rejected.Id()),
+            rejected.Entry("c", rejected.Id()),
+        ];
+        StorageAccountingResult rejectedResult = await rejected.Run(options);
+        ResourceLimitDiagnostic diagnostic = Assert.IsType<ResourceLimitDiagnostic>(
+            rejectedResult.ResourceLimitDiagnostic);
+        Assert.Equal(identityLimit
+            ? ResourceLimitDimension.MaximumIdentities
+            : ResourceLimitDimension.MaximumDistinctPaths, diagnostic.Dimension);
+        Assert.Equal(2, diagnostic.ConfiguredLimit);
+        Assert.Equal(3, diagnostic.ObservedOrAttemptedValue);
+    }
+
+    [Fact]
+    public async Task DirectoryCountIsRootInclusiveAtExactBoundary()
+    {
+        var accepted = new AccountingHarness();
+        accepted.Entries = [accepted.Entry("one", accepted.Id(), kind: StorageObjectKind.Directory)];
+        StorageAccountingResult acceptedResult = await accepted.Run(
+            new StorageAccountingOptions(maximumDirectories: 2));
+        Assert.NotNull(acceptedResult.Root);
+        Assert.Null(acceptedResult.ResourceLimitDiagnostic);
+
+        var rejected = new AccountingHarness();
+        rejected.Entries =
+        [
+            rejected.Entry("one", rejected.Id(), kind: StorageObjectKind.Directory),
+            rejected.Entry("two", rejected.Id(), kind: StorageObjectKind.Directory),
+        ];
+        StorageAccountingResult rejectedResult = await rejected.Run(
+            new StorageAccountingOptions(maximumDirectories: 2));
+        ResourceLimitDiagnostic diagnostic = Assert.IsType<ResourceLimitDiagnostic>(
+            rejectedResult.ResourceLimitDiagnostic);
+        Assert.Equal(ResourceLimitDimension.MaximumDirectories, diagnostic.Dimension);
+        Assert.Equal(2, diagnostic.ConfiguredLimit);
+        Assert.Equal(3, diagnostic.ObservedOrAttemptedValue);
+    }
+
+    [Fact]
+    public async Task AccountingBudgetAcceptsExactChargeAndReportsOneByteShortAttempt()
+    {
+        const long required = 2_106;
+        var accepted = new AccountingHarness();
+        accepted.Entries = [accepted.Entry("a", accepted.Id())];
+        StorageAccountingResult acceptedResult = await accepted.Run(
+            new StorageAccountingOptions(accountingStateBudget: required));
+        Assert.NotNull(acceptedResult.Root);
+        Assert.Null(acceptedResult.ResourceLimitDiagnostic);
+
+        var rejected = new AccountingHarness();
+        rejected.Entries = [rejected.Entry("a", rejected.Id())];
+        StorageAccountingResult rejectedResult = await rejected.Run(
+            new StorageAccountingOptions(accountingStateBudget: required - 1));
+        ResourceLimitDiagnostic diagnostic = Assert.IsType<ResourceLimitDiagnostic>(
+            rejectedResult.ResourceLimitDiagnostic);
+        Assert.Equal(ResourceLimitDimension.AccountingStateBudget, diagnostic.Dimension);
+        Assert.Equal(required - 1, diagnostic.ConfiguredLimit);
+        Assert.Equal(required, diagnostic.ObservedOrAttemptedValue);
     }
 
     [Fact]
@@ -85,6 +176,7 @@ public sealed class StorageAccountingEngineTests
         Assert.Null(result.Reconciliation.SignedResidualBytes);
         Assert.Null(result.Reconciliation.ObservedCoveragePercent);
         Assert.True(result.Summary.Reasons.HasFlag(AccountingReason.ArithmeticOverflow));
+        Assert.Null(result.ResourceLimitDiagnostic);
     }
 
     [Fact]

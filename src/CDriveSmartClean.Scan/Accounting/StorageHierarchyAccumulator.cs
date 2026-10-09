@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Volumes;
 using CDriveSmartClean.Domain.Storage;
 
@@ -64,7 +65,9 @@ internal sealed class StorageHierarchyAccumulator
             if (directoryIndexes.TryGetValue(next, out int found)) parent = found;
             else
             {
-                if (nodes.Count >= maximumDirectories) throw new StorageIdentityLedger.ResourceLimitException();
+                if (nodes.Count >= maximumDirectories)
+                    throw new StorageIdentityLedger.ResourceLimitException(
+                        ResourceLimitDimension.MaximumDirectories, maximumDirectories, nodes.Count + 1L);
                 charge(checked(256L + 2L * next.Length));
                 int index = nodes.Count;
                 var node = new Node(next, parent, checked(nodes[parent].Depth + 1), nodes[parent].FirstChild);

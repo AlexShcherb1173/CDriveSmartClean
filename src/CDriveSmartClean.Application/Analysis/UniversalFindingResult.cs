@@ -1,3 +1,4 @@
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Domain.Analysis;
 using CDriveSmartClean.Domain.Findings;
 
@@ -11,12 +12,28 @@ public sealed class UniversalFindingResult
         AnalysisQuality upstreamAnalysisQuality,
         AnalysisReason upstreamAnalysisReasons,
         IEnumerable<Finding> findings)
+        : this(quality, reasons, upstreamAnalysisQuality, upstreamAnalysisReasons, findings, null)
+    {
+    }
+
+    internal UniversalFindingResult(
+        AnalysisQuality quality,
+        UniversalFindingReason reasons,
+        AnalysisQuality upstreamAnalysisQuality,
+        AnalysisReason upstreamAnalysisReasons,
+        IEnumerable<Finding> findings,
+        ResourceLimitDiagnostic? resourceLimitDiagnostic)
     {
         if (!Enum.IsDefined(quality)) throw new ArgumentOutOfRangeException(nameof(quality));
         if (!Enum.IsDefined(upstreamAnalysisQuality))
             throw new ArgumentOutOfRangeException(nameof(upstreamAnalysisQuality));
         ValidateFlags(reasons, nameof(reasons));
         ValidateAnalysisFlags(upstreamAnalysisReasons, nameof(upstreamAnalysisReasons));
+        if (resourceLimitDiagnostic is not null &&
+            (resourceLimitDiagnostic.Stage != ResourceLimitStage.Findings ||
+             !reasons.HasFlag(UniversalFindingReason.ResourceLimit)))
+            throw new ArgumentException("Finding diagnostic requires a direct finding resource limit.",
+                nameof(resourceLimitDiagnostic));
         ArgumentNullException.ThrowIfNull(findings);
         Finding[] copy = findings.ToArray();
         if (copy.Any(finding => finding is null))
@@ -30,6 +47,7 @@ public sealed class UniversalFindingResult
         UpstreamAnalysisQuality = upstreamAnalysisQuality;
         UpstreamAnalysisReasons = upstreamAnalysisReasons;
         Findings = Array.AsReadOnly(copy);
+        ResourceLimitDiagnostic = resourceLimitDiagnostic;
     }
 
     public AnalysisQuality Quality { get; }
@@ -37,6 +55,7 @@ public sealed class UniversalFindingResult
     public AnalysisQuality UpstreamAnalysisQuality { get; }
     public AnalysisReason UpstreamAnalysisReasons { get; }
     public IReadOnlyList<Finding> Findings { get; }
+    internal ResourceLimitDiagnostic? ResourceLimitDiagnostic { get; }
 
     private static void ValidateFlags(UniversalFindingReason reasons, string name)
     {

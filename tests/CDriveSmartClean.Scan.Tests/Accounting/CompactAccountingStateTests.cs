@@ -151,6 +151,28 @@ public sealed class CompactAccountingStateTests
         Assert.True(commonCharge * 100 <= legacyCharge * 50);
     }
 
+    [Fact]
+    public void CombinedCommonCaseChargeMatchesCalibratedFormula()
+    {
+        const int paths = 2;
+        const int pathCharacters = 5;
+        const int directoryNodesIncludingRoot = 2;
+        const int directoryPathCharacters = 2;
+        var harness = new AccountingHarness();
+        var ledger = Ledger();
+        ledger.Add(harness.Entry(@"aa\f1", Identity(harness, 1)), @"aa\f1");
+        ledger.Add(harness.Entry(@"aa\f2", Identity(harness, 2)), @"aa\f2");
+
+        ledger.Finish(CancellationToken.None);
+
+        long expected = 640L +
+            paths * (440L + 2L * pathCharacters) +
+            (directoryNodesIncludingRoot - 1L) * (256L + 2L * directoryPathCharacters) +
+            directoryNodesIncludingRoot * 1024L;
+        Assert.Equal(3_848, expected);
+        Assert.Equal(expected, ledger.ChargedState);
+    }
+
     private static StorageIdentityLedger Ledger(int maximumIdentities = 10_000, int maximumPaths = 10_000,
         int maximumDirectories = 10_000, long budget = 512L * 1024 * 1024) =>
         new(new StorageAccountingOptions(maximumIdentities, maximumPaths, maximumDirectories, budget));

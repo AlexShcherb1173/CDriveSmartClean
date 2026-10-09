@@ -1,4 +1,5 @@
 using CDriveSmartClean.Application.Analysis;
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Observations;
@@ -60,6 +61,7 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
     private readonly Dictionary<string, AnalysisPathState> paths = new(StringComparer.Ordinal);
     private readonly Dictionary<StorageObjectIdentity, AnalysisIdentityState> identities = [];
     private AnalysisReason reasons;
+    private ResourceLimitDiagnostic? resourceLimitDiagnostic;
     private bool disabled;
     private bool completed;
 
@@ -88,10 +90,18 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
         bool newIdentity = entry.ObjectIdentity is { } identity && !identities.ContainsKey(identity);
         bool newAssociation = entry.ObjectIdentity is { } associatedIdentity &&
             (newIdentity || !identities[associatedIdentity].Paths.Contains(relative));
-        if (newPath && paths.Count >= request.Options.MaximumPathStates ||
-            newIdentity && identities.Count >= request.Options.MaximumIdentityStates)
+        if (newPath && paths.Count >= request.Options.MaximumPathStates)
         {
-            Disable(AnalysisReason.ResourceLimit);
+            Disable(AnalysisReason.ResourceLimit, new ResourceLimitDiagnostic(
+                ResourceLimitStage.Analysis, ResourceLimitDimension.MaximumPathStates,
+                request.Options.MaximumPathStates, paths.Count + 1L));
+            return ValueTask.CompletedTask;
+        }
+        if (newIdentity && identities.Count >= request.Options.MaximumIdentityStates)
+        {
+            Disable(AnalysisReason.ResourceLimit, new ResourceLimitDiagnostic(
+                ResourceLimitStage.Analysis, ResourceLimitDimension.MaximumIdentityStates,
+                request.Options.MaximumIdentityStates, identities.Count + 1L));
             return ValueTask.CompletedTask;
         }
 
@@ -107,9 +117,14 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
             Disable(AnalysisReason.ArithmeticOverflow);
             return ValueTask.CompletedTask;
         }
-        if (!resourceGuard.TryCharge(charge, out bool overflow))
+        if (!resourceGuard.TryCharge(charge, out bool overflow, out long attempted))
         {
-            Disable(overflow ? AnalysisReason.ArithmeticOverflow : AnalysisReason.ResourceLimit);
+            Disable(overflow ? AnalysisReason.ArithmeticOverflow : AnalysisReason.ResourceLimit,
+                overflow
+                    ? null
+                    : new ResourceLimitDiagnostic(ResourceLimitStage.Analysis,
+                        ResourceLimitDimension.AnalysisStateBudget,
+                        request.Options.AnalysisStateBudget, attempted));
             return ValueTask.CompletedTask;
         }
 
@@ -176,9 +191,14 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
             {
                 return Unavailable(accountingResult, reasons | AnalysisReason.ArithmeticOverflow);
             }
-            if (!resourceGuard.TryCharge(finalizationCharge, out bool overflow))
+            if (!resourceGuard.TryCharge(finalizationCharge, out bool overflow, out long attempted))
                 return Unavailable(accountingResult, reasons |
-                    (overflow ? AnalysisReason.ArithmeticOverflow : AnalysisReason.ResourceLimit));
+                    (overflow ? AnalysisReason.ArithmeticOverflow : AnalysisReason.ResourceLimit),
+                    overflow
+                        ? null
+                        : new ResourceLimitDiagnostic(ResourceLimitStage.Analysis,
+                            ResourceLimitDimension.AnalysisStateBudget,
+                            request.Options.AnalysisStateBudget, attempted));
             return CategoryAccountingBuilder.Build(
                 request, paths, identities, accountingResult, reasons, cancellationToken);
         }
@@ -194,9 +214,10 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
         }
     }
 
-    private void Disable(AnalysisReason reason)
+    private void Disable(AnalysisReason reason, ResourceLimitDiagnostic? diagnostic = null)
     {
         reasons |= reason;
+        resourceLimitDiagnostic ??= diagnostic;
         disabled = true;
         paths.Clear();
         identities.Clear();
@@ -230,7 +251,8 @@ internal sealed class StorageAnalysisSession : IStorageAnalysisSession
         fact.Measurement.Scope != StorageMeasurementScope.FileContent ||
         (fact.Attributes & ~(StorageEntryAttributes.Sparse | StorageEntryAttributes.Compressed)) != 0;
 
-    private static StorageAnalysisResult Unavailable(StorageAccountingResult accounting, AnalysisReason reason) =>
+    private StorageAnalysisResult Unavailable(StorageAccountingResult accounting, AnalysisReason reason,
+        ResourceLimitDiagnostic? diagnostic = null) =>
         new(AnalysisQuality.Unavailable, reason, accounting.Summary.Quality, accounting.Summary.Reasons,
-            [], [], [], [], []);
+            [], [], [], [], [], diagnostic ?? resourceLimitDiagnostic);
 }

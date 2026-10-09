@@ -1,4 +1,5 @@
 using CDriveSmartClean.Application.Analysis;
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Observations;
@@ -41,9 +42,14 @@ internal static class CompactStorageAnalysisBuilder
                 (snapshot is null && accounting.Summary.Quality != AccountingQuality.Unavailable
                     ? AnalysisReason.AccountingMismatch
                     : AnalysisReason.None));
-        if (snapshot.PathCount > request.Options.MaximumPathStates ||
-            snapshot.IdentityCount > request.Options.MaximumIdentityStates)
-            return Unavailable(accounting, reasons | AnalysisReason.ResourceLimit);
+        if (snapshot.PathCount > request.Options.MaximumPathStates)
+            return Unavailable(accounting, reasons | AnalysisReason.ResourceLimit,
+                CountDiagnostic(ResourceLimitDimension.MaximumPathStates,
+                    request.Options.MaximumPathStates));
+        if (snapshot.IdentityCount > request.Options.MaximumIdentityStates)
+            return Unavailable(accounting, reasons | AnalysisReason.ResourceLimit,
+                CountDiagnostic(ResourceLimitDimension.MaximumIdentityStates,
+                    request.Options.MaximumIdentityStates));
 
         var resourceGuard = new AnalysisResourceGuard(request.Options.AnalysisStateBudget);
         try
@@ -57,9 +63,14 @@ internal static class CompactStorageAnalysisBuilder
             {
                 return Unavailable(accounting, reasons | AnalysisReason.ArithmeticOverflow);
             }
-            if (!resourceGuard.TryCharge(charge, out bool overflow))
+            if (!resourceGuard.TryCharge(charge, out bool overflow, out long attempted))
                 return Unavailable(accounting, reasons |
-                    (overflow ? AnalysisReason.ArithmeticOverflow : AnalysisReason.ResourceLimit));
+                    (overflow ? AnalysisReason.ArithmeticOverflow : AnalysisReason.ResourceLimit),
+                    overflow
+                        ? null
+                        : new ResourceLimitDiagnostic(ResourceLimitStage.Analysis,
+                            ResourceLimitDimension.AnalysisStateBudget,
+                            request.Options.AnalysisStateBudget, attempted));
             return BuildAvailable(request, accounting, snapshot, reasons, token);
         }
         catch (OverflowException)
@@ -399,9 +410,13 @@ internal static class CompactStorageAnalysisBuilder
     private static StorageAnalysisResult Mismatch(StorageAccountingResult accounting, AnalysisReason reasons) =>
         Unavailable(accounting, reasons | AnalysisReason.AccountingMismatch);
 
-    private static StorageAnalysisResult Unavailable(StorageAccountingResult accounting, AnalysisReason reasons) =>
+    private static ResourceLimitDiagnostic CountDiagnostic(ResourceLimitDimension dimension, int limit) =>
+        new(ResourceLimitStage.Analysis, dimension, limit, limit + 1L);
+
+    private static StorageAnalysisResult Unavailable(StorageAccountingResult accounting, AnalysisReason reasons,
+        ResourceLimitDiagnostic? resourceLimitDiagnostic = null) =>
         new(AnalysisQuality.Unavailable, reasons, accounting.Summary.Quality, accounting.Summary.Reasons,
-            [], [], [], [], []);
+            [], [], [], [], [], resourceLimitDiagnostic);
 
     private sealed class SelectedHierarchyPathIndex
     {

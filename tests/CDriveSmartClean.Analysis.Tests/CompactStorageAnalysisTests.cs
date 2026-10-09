@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CDriveSmartClean.Analysis;
 using CDriveSmartClean.Application.Analysis;
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Observations;
@@ -73,6 +74,58 @@ public sealed class CompactStorageAnalysisTests
         Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
         Assert.True(result.Reasons.HasFlag(AnalysisReason.ResourceLimit));
         Assert.Empty(result.CategorySummaries);
+        ResourceLimitDiagnostic diagnostic = Assert.IsType<ResourceLimitDiagnostic>(
+            result.ResourceLimitDiagnostic);
+        Assert.Equal(ResourceLimitStage.Analysis, diagnostic.Stage);
+        Assert.Equal(ResourceLimitDimension.MaximumPathStates, diagnostic.Dimension);
+        Assert.Equal(1, diagnostic.ConfiguredLimit);
+        Assert.Equal(2, diagnostic.ObservedOrAttemptedValue);
+    }
+
+    [Fact]
+    public void SnapshotIdentityLimitReportsExactRejectedCount()
+    {
+        StorageEntry[] entries = [Entry("a", 1, Identity(1)), Entry("b", 1, Identity(2))];
+        StorageAnalysisRequest request = Request(new StorageAnalysisOptions(maximumIdentityStates: 1));
+        StorageAnalysisResult result = AnalyzeCompact(request, Accounting(entries));
+
+        ResourceLimitDiagnostic diagnostic = Assert.IsType<ResourceLimitDiagnostic>(
+            result.ResourceLimitDiagnostic);
+        Assert.Equal(ResourceLimitDimension.MaximumIdentityStates, diagnostic.Dimension);
+        Assert.Equal(1, diagnostic.ConfiguredLimit);
+        Assert.Equal(2, diagnostic.ObservedOrAttemptedValue);
+    }
+
+    [Fact]
+    public void SnapshotPathLimitHasStablePrecedenceWhenBothCountsExceedLimits()
+    {
+        StorageEntry[] entries = [Entry("a", 1, Identity(1)), Entry("b", 1, Identity(2))];
+        StorageAnalysisRequest request = Request(new StorageAnalysisOptions(
+            maximumPathStates: 1, maximumIdentityStates: 1));
+        StorageAnalysisResult result = AnalyzeCompact(request, Accounting(entries));
+
+        Assert.Equal(ResourceLimitDimension.MaximumPathStates,
+            Assert.IsType<ResourceLimitDiagnostic>(result.ResourceLimitDiagnostic).Dimension);
+    }
+
+    [Fact]
+    public void SnapshotBudgetAcceptsExactChargeAndReportsOneByteShortAttempt()
+    {
+        StorageEntry[] entries = [Entry("a", 1, Identity(1)), Entry("b", 1, Identity(2))];
+        const long required = 25_648;
+        StorageAccountingResult accounting = Accounting(entries);
+        StorageAnalysisResult accepted = AnalyzeCompact(Request(new StorageAnalysisOptions(
+            analysisStateBudget: required)), accounting);
+        Assert.NotEqual(AnalysisQuality.Unavailable, accepted.Quality);
+        Assert.Null(accepted.ResourceLimitDiagnostic);
+
+        StorageAnalysisResult rejected = AnalyzeCompact(Request(new StorageAnalysisOptions(
+            analysisStateBudget: required - 1)), accounting);
+        ResourceLimitDiagnostic diagnostic = Assert.IsType<ResourceLimitDiagnostic>(
+            rejected.ResourceLimitDiagnostic);
+        Assert.Equal(ResourceLimitDimension.AnalysisStateBudget, diagnostic.Dimension);
+        Assert.Equal(required - 1, diagnostic.ConfiguredLimit);
+        Assert.Equal(required, diagnostic.ObservedOrAttemptedValue);
     }
 
     [Fact]
@@ -86,6 +139,7 @@ public sealed class CompactStorageAnalysisTests
         StorageAnalysisResult result = AnalyzeCompact(Request(), accounting);
         Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
         Assert.True(result.Reasons.HasFlag(AnalysisReason.UpstreamAccountingUnavailable));
+        Assert.Null(result.ResourceLimitDiagnostic);
     }
 
     [Fact]
@@ -95,6 +149,7 @@ public sealed class CompactStorageAnalysisTests
         Assert.Equal(6_025_600, CompactStorageAnalysisBuilder.CalculateCharge(250_000, 100));
         Assert.Equal(12_025_600, CompactStorageAnalysisBuilder.CalculateCharge(500_000, 100));
         Assert.Equal(24_025_600, CompactStorageAnalysisBuilder.CalculateCharge(1_000_000, 100));
+        Assert.Equal(36_025_600, CompactStorageAnalysisBuilder.CalculateCharge(1_500_000, 100));
         Assert.True(CompactStorageAnalysisBuilder.CompactPathStateCharge <
             StorageAnalysisSession.LegacyCommonCaseCharge(16));
     }
@@ -172,6 +227,14 @@ public sealed class CompactStorageAnalysisTests
             new("a", new StorageAggregate(), []),
             new("b", new StorageAggregate(), []),
         ];
+        UniversalFindingResult accepted = new UniversalFindingBuilder().Build(
+            EmptyCompactFindingRequest(
+                new StorageHierarchyNode("", new StorageAggregate(), children),
+                new UniversalFindingOptions(5, 100, 3)),
+            CancellationToken.None);
+        Assert.NotEqual(AnalysisQuality.Unavailable, accepted.Quality);
+        Assert.Null(accepted.ResourceLimitDiagnostic);
+
         UniversalFindingRequest request = EmptyCompactFindingRequest(
             new StorageHierarchyNode("", new StorageAggregate(), children),
             new UniversalFindingOptions(5, 100, 2));
@@ -179,6 +242,12 @@ public sealed class CompactStorageAnalysisTests
         Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
         Assert.True(result.Reasons.HasFlag(UniversalFindingReason.ResourceLimit));
         Assert.Empty(result.Findings);
+        ResourceLimitDiagnostic diagnostic = Assert.IsType<ResourceLimitDiagnostic>(
+            result.ResourceLimitDiagnostic);
+        Assert.Equal(ResourceLimitStage.Findings, diagnostic.Stage);
+        Assert.Equal(ResourceLimitDimension.MaximumHierarchyNodes, diagnostic.Dimension);
+        Assert.Equal(2, diagnostic.ConfiguredLimit);
+        Assert.Equal(3, diagnostic.ObservedOrAttemptedValue);
     }
 
     [Fact]

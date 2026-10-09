@@ -146,7 +146,7 @@ public sealed class StorageEnumerationContractsTests
             [typeof(StorageEntryAttributes), typeof(string), typeof(bool), typeof(StorageMeasurement), typeof(StorageObjectIdentity),
                 typeof(StorageObjectKind), typeof(ReparseKind), typeof(VolumeIdentity)],
             typeof(StorageEntry).GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal).Select(p => p.PropertyType));
-        Assert.Equal(44, typeof(StorageEntry).Assembly.GetExportedTypes().Length);
+        Assert.Equal(47, typeof(StorageEntry).Assembly.GetExportedTypes().Length);
         Assert.Equal(30, typeof(VolumeIdentity).Assembly.GetExportedTypes().Length);
     }
 

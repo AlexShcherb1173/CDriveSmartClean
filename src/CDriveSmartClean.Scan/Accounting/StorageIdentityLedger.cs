@@ -1,3 +1,4 @@
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Observations;
@@ -10,7 +11,12 @@ internal sealed class StorageIdentityLedger
     internal readonly record struct PathId(int Value);
     internal readonly record struct IdentityId(int Value);
 
-    internal sealed class ResourceLimitException : Exception;
+    internal sealed class ResourceLimitException(
+        ResourceLimitDimension dimension, long configuredLimit, long observedOrAttemptedValue) : Exception
+    {
+        internal ResourceLimitDiagnostic Diagnostic { get; } = new(
+            ResourceLimitStage.Accounting, dimension, configuredLimit, observedOrAttemptedValue);
+    }
 
     private readonly record struct Evidence(StorageObjectIdentity? Identity, StorageMeasurement Measurement,
         StorageObjectKind Kind, ReparseKind Reparse, StorageEntryAttributes Attributes);
@@ -92,7 +98,9 @@ internal sealed class StorageIdentityLedger
     private void Charge(long amount)
     {
         long next = checked(charged + amount);
-        if (next > options.AccountingStateBudget) throw new ResourceLimitException();
+        if (next > options.AccountingStateBudget)
+            throw new ResourceLimitException(ResourceLimitDimension.AccountingStateBudget,
+                options.AccountingStateBudget, next);
         charged = next;
     }
 
@@ -132,7 +140,9 @@ internal sealed class StorageIdentityLedger
     private PathId GetOrAddPath(string relative, Evidence evidence, StorageObjectKind kind)
     {
         if (paths.TryGetValue(relative, out PathId pathId)) return pathId;
-        if (pathRecords.Count >= options.MaximumDistinctPaths) throw new ResourceLimitException();
+        if (pathRecords.Count >= options.MaximumDistinctPaths)
+            throw new ResourceLimitException(ResourceLimitDimension.MaximumDistinctPaths,
+                options.MaximumDistinctPaths, pathRecords.Count + 1L);
         Charge(checked(PathRecordBaseCharge + relative.Length * PathCharacterCharge));
         int separator = relative.LastIndexOf('\\');
         int parent = hierarchy.Directory(separator < 0 ? "" : relative[..separator]);
@@ -146,7 +156,9 @@ internal sealed class StorageIdentityLedger
     private IdentityId GetOrAddIdentity(StorageObjectIdentity identity, Evidence evidence)
     {
         if (identities.TryGetValue(identity, out IdentityId identityId)) return identityId;
-        if (identityRecords.Count >= options.MaximumIdentities) throw new ResourceLimitException();
+        if (identityRecords.Count >= options.MaximumIdentities)
+            throw new ResourceLimitException(ResourceLimitDimension.MaximumIdentities,
+                options.MaximumIdentities, identityRecords.Count + 1L);
         Charge(IdentityRecordCharge);
         identityId = new IdentityId(identityRecords.Count);
         identityRecords.Add(new IdentityRecord(identity, evidence));
