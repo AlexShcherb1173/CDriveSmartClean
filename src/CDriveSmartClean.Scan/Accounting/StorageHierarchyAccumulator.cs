@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using CDriveSmartClean.Application.Scanning.Volumes;
 using CDriveSmartClean.Domain.Storage;
 
@@ -5,25 +6,34 @@ namespace CDriveSmartClean.Scan.Accounting;
 
 internal sealed class StorageHierarchyAccumulator
 {
-    internal sealed class Node(string path, int parent, int depth)
+    [InlineArray(15)]
+    private struct NodeValues
+    {
+        private long first;
+    }
+
+    private sealed class Node(string path, int parent, int depth, int nextSibling)
     {
         internal readonly string Path = path;
         internal readonly int Parent = parent;
         internal readonly int Depth = depth;
-        internal readonly List<int> Children = [];
-        internal readonly Dictionary<string, int> ChildIndexes = new(StringComparer.Ordinal);
-        internal readonly long[] Values = new long[15];
+        internal readonly int NextSibling = nextSibling;
+        internal int FirstChild = -1;
+        internal NodeValues Values;
     }
 
-    internal readonly List<Node> Nodes = [new("", 0, 0)];
+    private readonly List<Node> nodes = [new("", 0, 0, -1)];
+    private readonly Dictionary<string, int> directoryIndexes = new(StringComparer.Ordinal) { [""] = 0 };
     private readonly Action<long> charge;
     private readonly int maximumDirectories;
+
+    internal int DirectoryCount => nodes.Count;
 
     internal StorageHierarchyAccumulator(Action<long> charge, int maximumDirectories)
     {
         this.charge = charge;
         this.maximumDirectories = maximumDirectories;
-        charge(1024);
+        charge(256);
     }
 
     internal static string ValidatePath(SystemVolumeDescriptor volume, string path)
@@ -43,72 +53,84 @@ internal sealed class StorageHierarchyAccumulator
 
     internal int Directory(string path)
     {
+        if (path.Length == 0) return 0;
         int parent = 0;
-        foreach (string component in path.Split('\\', StringSplitOptions.RemoveEmptyEntries))
+        int start = 0;
+        while (start < path.Length)
         {
-            if (Nodes[parent].ChildIndexes.TryGetValue(component, out int found))
+            int separator = path.IndexOf('\\', start);
+            int end = separator < 0 ? path.Length : separator;
+            string next = end == path.Length ? path : path[..end];
+            if (directoryIndexes.TryGetValue(next, out int found)) parent = found;
+            else
             {
-                parent = found;
-                continue;
+                if (nodes.Count >= maximumDirectories) throw new StorageIdentityLedger.ResourceLimitException();
+                charge(checked(256L + 2L * next.Length));
+                int index = nodes.Count;
+                var node = new Node(next, parent, checked(nodes[parent].Depth + 1), nodes[parent].FirstChild);
+                nodes.Add(node);
+                nodes[parent].FirstChild = index;
+                directoryIndexes.Add(next, index);
+                parent = index;
             }
-            if (Nodes.Count >= maximumDirectories) throw new StorageIdentityLedger.ResourceLimitException();
-            string next = Nodes[parent].Path.Length == 0 ? component : Nodes[parent].Path + "\\" + component;
-            charge(checked(1024L + 4L * next.Length));
-            int index = Nodes.Count;
-            Nodes.Add(new Node(next, parent, checked(Nodes[parent].Depth + 1)));
-            Nodes[parent].Children.Add(index);
-            Nodes[parent].ChildIndexes.Add(component, index);
-            parent = index;
+            start = end + 1;
         }
         return parent;
     }
 
-    internal int[][] Ancestors(CancellationToken token)
+    internal int CommonAncestor(int left, int right, CancellationToken token)
     {
-        int levels = 1;
-        while ((1L << levels) <= Nodes.Count) levels++;
-        charge(checked((long)Nodes.Count * levels * 8 + Nodes.Count * 64L));
-        var ancestors = new int[levels][];
-        ancestors[0] = Nodes.Select(n => n.Parent).ToArray();
-        for (int level = 1; level < levels; level++)
+        while (nodes[left].Depth > nodes[right].Depth)
         {
             token.ThrowIfCancellationRequested();
-            ancestors[level] = new int[Nodes.Count];
-            for (int i = 0; i < Nodes.Count; i++) ancestors[level][i] = ancestors[level - 1][ancestors[level - 1][i]];
+            left = nodes[left].Parent;
         }
-        return ancestors;
+        while (nodes[right].Depth > nodes[left].Depth)
+        {
+            token.ThrowIfCancellationRequested();
+            right = nodes[right].Parent;
+        }
+        while (left != right)
+        {
+            token.ThrowIfCancellationRequested();
+            left = nodes[left].Parent;
+            right = nodes[right].Parent;
+        }
+        return left;
     }
 
-    internal int CommonAncestor(int left, int right, int[][] ancestors)
+    internal string Path(int node) => nodes[node].Path;
+
+    internal void AddValue(int node, int field, long value)
     {
-        if (Nodes[left].Depth < Nodes[right].Depth) (left, right) = (right, left);
-        int difference = Nodes[left].Depth - Nodes[right].Depth;
-        for (int level = 0; difference != 0; level++, difference >>= 1)
-            if ((difference & 1) != 0) left = ancestors[level][left];
-        if (left == right) return left;
-        for (int level = ancestors.Length - 1; level >= 0; level--)
-            if (ancestors[level][left] != ancestors[level][right])
-                (left, right) = (ancestors[level][left], ancestors[level][right]);
-        return Nodes[left].Parent;
+        nodes[node].Values[field] = checked(nodes[node].Values[field] + value);
     }
 
     internal StorageHierarchyNode Finish(CancellationToken token)
     {
-        charge(checked(Nodes.Count * 1024L));
-        var result = new StorageHierarchyNode[Nodes.Count];
-        for (int i = Nodes.Count - 1; i >= 0; i--)
+        charge(checked(nodes.Count * 1024L));
+        var result = new StorageHierarchyNode[nodes.Count];
+        for (int i = nodes.Count - 1; i >= 0; i--)
         {
             token.ThrowIfCancellationRequested();
-            Node node = Nodes[i];
+            Node node = nodes[i];
             node.Values[4] = node.Values[3];
-            foreach (int child in node.Children)
-                for (int field = 0; field < node.Values.Length; field++)
-                    if (field != 3) node.Values[field] = checked(node.Values[field] + Nodes[child].Values[field]);
-            long[] v = node.Values;
+            for (int child = node.FirstChild; child >= 0; child = nodes[child].NextSibling)
+            {
+                for (int field = 0; field < 15; field++)
+                    if (field != 3) node.Values[field] = checked(node.Values[field] + nodes[child].Values[field]);
+            }
             result[i] = new StorageHierarchyNode(node.Path,
-                new StorageAggregate(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
-                    v[8], v[9], v[10], v[11], v[12], v[13], v[14]), node.Children.Select(child => result[child]));
+                new StorageAggregate(node.Values[0], node.Values[1], node.Values[2], node.Values[3], node.Values[4],
+                    node.Values[5], node.Values[6], node.Values[7], node.Values[8], node.Values[9], node.Values[10],
+                    node.Values[11], node.Values[12], node.Values[13], node.Values[14]), Children(node, result));
         }
         return result[0];
+    }
+
+    private IEnumerable<StorageHierarchyNode> Children(Node node, StorageHierarchyNode[] result)
+    {
+        for (int child = node.FirstChild; child >= 0; child = nodes[child].NextSibling)
+            yield return result[child];
     }
 }

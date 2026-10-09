@@ -35,7 +35,7 @@ public sealed class StorageAccountingEngineTests
     {
         var h = new AccountingHarness();
         h.Entries = [h.Entry("a", h.Id())];
-        var result = await h.Run(new(accountingStateBudget: 3000));
+        var result = await h.Run(new(accountingStateBudget: 1000));
         Assert.Single(h.Forwarded);
         Assert.Null(result.Root);
         Assert.Null(result.Summary.DeduplicatedObservedAllocatedBytes);
