@@ -1143,3 +1143,26 @@ cannot be propagated by `ScanAsync`. Unexpected provider and programming failure
 remains legacy/unused for this product workflow and is neither implemented nor removed.
 
 This document is the technical baseline for implementation and must remain consistent with `BUSINESS_LOGIC_V1_1.md` and `SECURITY_MODEL_V1.md`.
+
+---
+
+## 40. MVP-02 read-only WPF desktop
+
+`CDriveSmartClean.Desktop` is a non-elevated `net10.0-windows`/x64 WPF executable whose only direct production
+project reference is Runtime. It adds no hosting, persistence, telemetry, AI, executor, cleanup, or infrastructure
+dependency. The application starts idle and performs no product scan until the user explicitly selects Start Scan.
+
+The ViewModel creates a new scan-session identifier and cancellation source for each invocation. Runtime execution
+crosses an explicit `Task.Run` worker boundary so filesystem traversal cannot occupy the WPF dispatcher. A bounded
+latest-value progress observer captures the UI synchronization context, keeps at most one pending UI delivery, and
+accepts updates only for the active session while the scan remains active. The Runtime `Completed` progress phase is
+informational; only the awaited `ScanAsync` outcome establishes Completed, Cancelled, or Failed UI state. Cancel
+requests cancellation without fabricating a partial result. Window close deactivates progress, invalidates the
+session, requests cancellation, and does not synchronously wait for the worker.
+
+Successful results are projected on the UI thread into immutable volume, quality, category, issue, and Finding rows.
+Used space comes only from the final volume snapshot. Category rows come only from `CategoryAggregate` findings, and
+issue rows come only from authoritative issue counts; overlapping views are never summed. Null bytes and coverage
+remain unavailable rather than zero. Current universal Finding reclaim is Unknown and is displayed nonnumerically as
+not estimated; allocated or logical bytes are never presented as reclaimable. Risk, risk confidence, Finding
+confidence, protection, and facets remain distinct. The UI exposes no delete, clean, remove, fix, or other action.
