@@ -48,6 +48,12 @@ internal sealed class AnalysisIdentityState(AnalysisEntryFact fact)
 
 internal sealed class StorageAnalysisSession : IStorageAnalysisSession
 {
+    internal static long LegacyCommonCaseCharge(int relativePathLength)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(relativePathLength);
+        return checked(2304L + relativePathLength * 8L);
+    }
+
     private readonly StorageAnalysisRequest request;
     private readonly DeterministicClassificationEngine classifier;
     private readonly AnalysisResourceGuard resourceGuard;
