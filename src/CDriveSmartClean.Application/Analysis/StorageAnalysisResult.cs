@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Domain.Analysis;
 using CDriveSmartClean.Domain.Findings;
 using CDriveSmartClean.Domain.Storage;
@@ -14,6 +15,20 @@ public sealed class StorageAnalysisResult
         IEnumerable<StorageAnalysisCandidate> largestIdentityCandidates,
         IEnumerable<StorageAnalysisCandidate> largestFileCandidates,
         IEnumerable<StorageAnalysisCandidate> largestUnknownCandidates)
+        : this(quality, reasons, upstreamAccountingQuality, upstreamAccountingReasons, categorySummaries,
+            largestHierarchyCandidates, largestIdentityCandidates, largestFileCandidates, largestUnknownCandidates,
+            null)
+    {
+    }
+
+    internal StorageAnalysisResult(AnalysisQuality quality, AnalysisReason reasons,
+        AccountingQuality upstreamAccountingQuality, AccountingReason upstreamAccountingReasons,
+        IEnumerable<CategorySummary> categorySummaries,
+        IEnumerable<StorageAnalysisCandidate> largestHierarchyCandidates,
+        IEnumerable<StorageAnalysisCandidate> largestIdentityCandidates,
+        IEnumerable<StorageAnalysisCandidate> largestFileCandidates,
+        IEnumerable<StorageAnalysisCandidate> largestUnknownCandidates,
+        ResourceLimitDiagnostic? resourceLimitDiagnostic)
     {
         if (!Enum.IsDefined(quality)) throw new ArgumentOutOfRangeException(nameof(quality));
         if (!Enum.IsDefined(upstreamAccountingQuality)) throw new ArgumentOutOfRangeException(nameof(upstreamAccountingQuality));
@@ -24,6 +39,11 @@ public sealed class StorageAnalysisResult
             .Aggregate(AccountingReason.None, (current, value) => current | value);
         if ((upstreamAccountingReasons & ~knownAccountingReasons) != 0)
             throw new ArgumentOutOfRangeException(nameof(upstreamAccountingReasons));
+        if (resourceLimitDiagnostic is not null &&
+            (resourceLimitDiagnostic.Stage != ResourceLimitStage.Analysis ||
+             !reasons.HasFlag(AnalysisReason.ResourceLimit)))
+            throw new ArgumentException("Analysis diagnostic requires a direct analysis resource limit.",
+                nameof(resourceLimitDiagnostic));
         ArgumentNullException.ThrowIfNull(categorySummaries);
         ArgumentNullException.ThrowIfNull(largestHierarchyCandidates);
         ArgumentNullException.ThrowIfNull(largestIdentityCandidates);
@@ -51,6 +71,7 @@ public sealed class StorageAnalysisResult
         LargestIdentityCandidates = Copy(largestIdentityCandidates, nameof(largestIdentityCandidates));
         LargestFileCandidates = Copy(largestFileCandidates, nameof(largestFileCandidates));
         LargestUnknownCandidates = Copy(largestUnknownCandidates, nameof(largestUnknownCandidates));
+        ResourceLimitDiagnostic = resourceLimitDiagnostic;
     }
 
     public AnalysisQuality Quality { get; }
@@ -62,6 +83,7 @@ public sealed class StorageAnalysisResult
     public IReadOnlyList<StorageAnalysisCandidate> LargestIdentityCandidates { get; }
     public IReadOnlyList<StorageAnalysisCandidate> LargestFileCandidates { get; }
     public IReadOnlyList<StorageAnalysisCandidate> LargestUnknownCandidates { get; }
+    internal ResourceLimitDiagnostic? ResourceLimitDiagnostic { get; }
 
     private static ReadOnlyCollection<StorageAnalysisCandidate> Copy(
         IEnumerable<StorageAnalysisCandidate> candidates, string name)

@@ -2,8 +2,8 @@ namespace CDriveSmartClean.Application.Scanning.Accounting;
 
 public sealed class StorageAccountingOptions
 {
-    public StorageAccountingOptions(int maximumIdentities = 1_000_000, int maximumDistinctPaths = 1_000_000,
-        int maximumDirectories = 100_000, long accountingStateBudget = 512L * 1024 * 1024)
+    public StorageAccountingOptions(int maximumIdentities = 1_500_000, int maximumDistinctPaths = 1_500_000,
+        int maximumDirectories = 250_000, long accountingStateBudget = 1536L * 1024 * 1024)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumIdentities);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumDistinctPaths);

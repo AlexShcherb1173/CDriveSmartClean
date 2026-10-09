@@ -1,3 +1,4 @@
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Enumeration;
 using CDriveSmartClean.Application.Scanning.Traversal;
@@ -44,12 +45,13 @@ public sealed class StorageAccountingEngine
         {
             await walker.WalkAsync(systemVolume, session, session, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            var (root, groups) = session.Finish(cancellationToken);
+            var (root, snapshot) = session.Finish(cancellationToken);
             VolumeSpaceSnapshot end = Snapshot(systemVolume);
             cancellationToken.ThrowIfCancellationRequested();
             var summary = new StorageAccountingSummary(root?.Aggregate, session.Reasons);
-            return new StorageAccountingResult(summary, root, groups,
-                new VolumeReconciliation(start, end, summary, true), true, session.Issues);
+            return new StorageAccountingResult(summary, root, snapshot,
+                new VolumeReconciliation(start, end, summary, true), true, session.Issues,
+                session.ResourceLimitDiagnostic);
         }
         finally
         {
@@ -72,6 +74,7 @@ public sealed class StorageAccountingEngine
         private readonly IStorageTraversalIssueSink issueSink;
         private StorageIdentityLedger? ledger;
         internal AccountingReason Reasons { get; private set; }
+        internal ResourceLimitDiagnostic? ResourceLimitDiagnostic { get; private set; }
         internal Dictionary<StorageTraversalIssueKind, long> Issues { get; }
 
         internal Session(SystemVolumeDescriptor volume, IStorageEntrySink entrySink, IStorageTraversalIssueSink issueSink,
@@ -90,7 +93,10 @@ public sealed class StorageAccountingEngine
                 }
             }
             try { ledger = new StorageIdentityLedger(options); }
-            catch (StorageIdentityLedger.ResourceLimitException) { Disable(AccountingReason.ResourceLimit); }
+            catch (StorageIdentityLedger.ResourceLimitException exception)
+            {
+                Disable(AccountingReason.ResourceLimit, exception.Diagnostic);
+            }
             catch (OverflowException) { Disable(AccountingReason.ArithmeticOverflow); }
         }
 
@@ -103,7 +109,10 @@ public sealed class StorageAccountingEngine
             if (ledger is not null)
             {
                 try { ledger.Add(entry, relative); }
-                catch (StorageIdentityLedger.ResourceLimitException) { Disable(AccountingReason.ResourceLimit); }
+                catch (StorageIdentityLedger.ResourceLimitException exception)
+                {
+                    Disable(AccountingReason.ResourceLimit, exception.Diagnostic);
+                }
                 catch (OverflowException) { Disable(AccountingReason.ArithmeticOverflow); }
             }
             await entrySink.WriteAsync(entry, cancellationToken).ConfigureAwait(false);
@@ -120,7 +129,7 @@ public sealed class StorageAccountingEngine
             await issueSink.WriteAsync(issue, cancellationToken).ConfigureAwait(false);
         }
 
-        internal (StorageHierarchyNode? Root, AllocationGroup[] Groups) Finish(CancellationToken token)
+        internal (StorageHierarchyNode? Root, CompactAccountingSnapshot? Snapshot) Finish(CancellationToken token)
         {
             if (ledger is not null)
             {
@@ -130,15 +139,19 @@ public sealed class StorageAccountingEngine
                     Reasons |= ledger.Reasons;
                     return result;
                 }
-                catch (StorageIdentityLedger.ResourceLimitException) { Disable(AccountingReason.ResourceLimit); }
+                catch (StorageIdentityLedger.ResourceLimitException exception)
+                {
+                    Disable(AccountingReason.ResourceLimit, exception.Diagnostic);
+                }
                 catch (OverflowException) { Disable(AccountingReason.ArithmeticOverflow); }
             }
-            return (null, []);
+            return (null, null);
         }
 
-        private void Disable(AccountingReason reason)
+        private void Disable(AccountingReason reason, ResourceLimitDiagnostic? resourceLimitDiagnostic = null)
         {
             Reasons |= reason;
+            ResourceLimitDiagnostic ??= resourceLimitDiagnostic;
             ledger = null;
         }
         internal void Clear() => ledger = null;

@@ -17,18 +17,21 @@ namespace CDriveSmartClean.Runtime.Tests;
 public sealed class SystemVolumeScanWorkflowTests
 {
     [Fact]
-    public async Task ExecutesRequiredOrderWithOneTraversalAndSameEntryStream()
+    public async Task ExecutesCompactPathWithOneTraversalAndNoLegacyEntryStream()
     {
         var harness = new Harness();
         ProductScanResult result = await harness.Run();
 
-        Assert.Equal(["system", "context", "analysis-create", "enumerate-root", "analysis-complete", "finding-build"],
+        Assert.Equal(["system", "context", "enumerate-root", "analysis-compact", "finding-build"],
             harness.Order);
         Assert.Equal(1, harness.Enumerator.RootCalls);
-        Assert.Equal(harness.Enumerator.Entries, harness.Analyzer.Session.Entries);
-        Assert.Equal(1, harness.Analyzer.Session.CompleteCalls);
-        Assert.Same(harness.Analyzer.Session.CompletedAccounting, harness.FindingBuilder.Request!.AccountingResult);
-        Assert.Same(harness.Analyzer.Session.Result, harness.FindingBuilder.Request.AnalysisResult);
+        Assert.Equal(0, harness.Analyzer.LegacySessionCreateCalls);
+        Assert.Equal(0, harness.Analyzer.LegacyEntryWrites);
+        Assert.Equal(1, harness.Analyzer.CompactAnalysisCalls);
+        Assert.Same(harness.Analyzer.CompletedAccounting, harness.FindingBuilder.Request!.AccountingResult);
+        Assert.Same(harness.Analyzer.Result, harness.FindingBuilder.Request.AnalysisResult);
+        Assert.Equal(0, harness.Analyzer.ProjectedGroupsAfterAnalysis);
+        Assert.Equal(0, harness.FindingBuilder.Request.AccountingResult.ProjectedAllocationGroupCount);
         Assert.Equal(harness.SessionId, result.ScanSessionId);
     }
 
@@ -116,16 +119,16 @@ public sealed class SystemVolumeScanWorkflowTests
     }
 
     [Fact]
-    public async Task AccountingUnavailablePreservesUsableIncompleteDownstreamResults()
+    public async Task AccountingUnavailableMakesSnapshotAnalysisTruthfullyUnavailable()
     {
         var harness = new Harness();
         var request = new ProductScanRequest(harness.SessionId,
             new StorageAccountingOptions(accountingStateBudget: 1));
         ProductScanResult result = await harness.Run(request);
         Assert.Equal(AccountingQuality.Unavailable, result.AccountingQuality);
-        Assert.Equal(AnalysisQuality.Incomplete, result.AnalysisQuality);
-        Assert.Equal(AnalysisQuality.Incomplete, result.FindingQuality);
-        Assert.NotEmpty(result.Findings);
+        Assert.Equal(AnalysisQuality.Unavailable, result.AnalysisQuality);
+        Assert.Equal(AnalysisQuality.Unavailable, result.FindingQuality);
+        Assert.Empty(result.Findings);
     }
 
     [Fact]
@@ -176,8 +179,9 @@ public sealed class SystemVolumeScanWorkflowTests
     {
         var harness = new Harness { CancelDuringTraversal = true };
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => harness.Run());
-        Assert.Single(harness.Analyzer.Session.Entries);
-        Assert.Equal(0, harness.Analyzer.Session.CompleteCalls);
+        Assert.Equal(0, harness.Analyzer.LegacySessionCreateCalls);
+        Assert.Equal(0, harness.Analyzer.LegacyEntryWrites);
+        Assert.Equal(0, harness.Analyzer.CompactAnalysisCalls);
     }
 
     [Fact]
@@ -368,21 +372,40 @@ public sealed class SystemVolumeScanWorkflowTests
         }
     }
 
-    private sealed class SpyAnalyzer(List<string> order) : IStorageAnalyzer
+    private sealed class SpyAnalyzer(List<string> order) : IStorageAnalyzer, ICompactStorageAnalyzer
     {
-        internal SpyAnalysisSession Session { get; private set; } = null!;
         internal StorageAnalysisRequest? Request { get; private set; }
+        internal int LegacySessionCreateCalls { get; private set; }
+        internal int LegacyEntryWrites { get; set; }
+        internal int CompactAnalysisCalls { get; private set; }
+        internal StorageAccountingResult? CompletedAccounting { get; private set; }
+        internal StorageAnalysisResult? Result { get; private set; }
+        internal int ProjectedGroupsAfterAnalysis { get; private set; }
 
         public IStorageAnalysisSession CreateSession(StorageAnalysisRequest request)
         {
             order.Add("analysis-create");
+            LegacySessionCreateCalls++;
             Request = request;
-            Session = new SpyAnalysisSession(order, new UniversalStorageAnalyzer().CreateSession(request));
-            return Session;
+            return new SpyAnalysisSession(this, order, new UniversalStorageAnalyzer().CreateSession(request));
+        }
+
+        public StorageAnalysisResult Analyze(StorageAnalysisRequest request,
+            StorageAccountingResult accountingResult, CancellationToken cancellationToken)
+        {
+            order.Add("analysis-compact");
+            CompactAnalysisCalls++;
+            Request = request;
+            CompletedAccounting = accountingResult;
+            Result = ((ICompactStorageAnalyzer)new UniversalStorageAnalyzer()).Analyze(
+                request, accountingResult, cancellationToken);
+            ProjectedGroupsAfterAnalysis = accountingResult.ProjectedAllocationGroupCount;
+            return Result;
         }
     }
 
-    private sealed class SpyAnalysisSession(List<string> order, IStorageAnalysisSession inner) : IStorageAnalysisSession
+    private sealed class SpyAnalysisSession(SpyAnalyzer owner, List<string> order,
+        IStorageAnalysisSession inner) : IStorageAnalysisSession
     {
         internal List<StorageEntry> Entries { get; } = [];
         internal int CompleteCalls { get; private set; }
@@ -391,6 +414,7 @@ public sealed class SystemVolumeScanWorkflowTests
 
         public async ValueTask WriteAsync(StorageEntry entry, CancellationToken cancellationToken)
         {
+            owner.LegacyEntryWrites++;
             Entries.Add(entry);
             await inner.WriteAsync(entry, cancellationToken);
         }
