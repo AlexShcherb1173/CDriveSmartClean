@@ -31,6 +31,7 @@ public sealed class SystemVolumeScanWorkflowTests
         Assert.Same(harness.Analyzer.CompletedAccounting, harness.FindingBuilder.Request!.AccountingResult);
         Assert.Same(harness.Analyzer.Result, harness.FindingBuilder.Request.AnalysisResult);
         Assert.Equal(0, harness.Analyzer.ProjectedGroupsAfterAnalysis);
+        Assert.Equal(0, harness.FindingBuilder.Request.AccountingResult.ProjectedAllocationGroupCount);
         Assert.Equal(harness.SessionId, result.ScanSessionId);
     }
 

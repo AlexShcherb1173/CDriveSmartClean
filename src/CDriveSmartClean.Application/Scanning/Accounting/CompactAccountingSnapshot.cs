@@ -58,6 +58,27 @@ internal sealed class CompactAccountingSnapshot
         PathFact path = paths[pathId];
         return pathIdentities.AsSpan(path.IdentityOffset, path.IdentityCount);
     }
+    internal bool TryFindIdentity(StorageObjectIdentity identity, out int identityId)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        int low = 0;
+        int high = identityOrder.Length - 1;
+        while (low <= high)
+        {
+            int middle = low + (high - low) / 2;
+            int candidateId = identityOrder[middle];
+            int comparison = CompareIdentity(identities[candidateId].Identity, identity);
+            if (comparison == 0)
+            {
+                identityId = candidateId;
+                return true;
+            }
+            if (comparison < 0) low = middle + 1;
+            else high = middle - 1;
+        }
+        identityId = -1;
+        return false;
+    }
     internal CompactAllocationGroupList CreateAllocationGroups() => new(this);
 
     internal static long SealCharge(int pathCount, int identityCount, int associationCount)
@@ -185,8 +206,11 @@ internal sealed class CompactAccountingSnapshot
 
     private int Compare(int leftIdentityId, int rightIdentityId)
     {
-        StorageObjectIdentity left = identities[leftIdentityId].Identity;
-        StorageObjectIdentity right = identities[rightIdentityId].Identity;
+        return CompareIdentity(identities[leftIdentityId].Identity, identities[rightIdentityId].Identity);
+    }
+
+    private static int CompareIdentity(StorageObjectIdentity left, StorageObjectIdentity right)
+    {
         int volume = left.VolumeIdentity.Id.CompareTo(right.VolumeIdentity.Id);
         return volume != 0 ? volume : left.ObjectId.CompareTo(right.ObjectId);
     }

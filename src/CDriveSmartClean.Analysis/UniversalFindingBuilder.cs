@@ -1,5 +1,7 @@
 using CDriveSmartClean.Application.Analysis;
+using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Enumeration;
+using CDriveSmartClean.Application.Scanning.Observations;
 using CDriveSmartClean.Domain;
 using CDriveSmartClean.Domain.Analysis;
 using CDriveSmartClean.Domain.Findings;
@@ -29,7 +31,6 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
             if (request.AnalysisResult.Quality == AnalysisQuality.Unavailable)
                 return Unavailable(request, reasons | UniversalFindingReason.UpstreamAnalysisUnavailable);
 
-            AccountingIndexes indexes = BuildAccountingIndexes(request, cancellationToken);
             var classifier = new DeterministicClassificationEngine(NormalizeClassificationContext(request));
 
             bool incomplete = request.AnalysisResult.Quality == AnalysisQuality.Incomplete ||
@@ -45,18 +46,39 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
             var categories = BuildCategoryFindings(request, capacity, incomplete);
             var drafts = new Dictionary<string, FindingDraft>(StringComparer.Ordinal);
             var validatedCandidates = new Dictionary<string, FindingDraft>(StringComparer.Ordinal);
-            AddCandidateView(request.AnalysisResult.LargestHierarchyCandidates,
-                AnalysisCandidateScope.HierarchyNode, request, capacity, indexes, classifier,
-                validatedCandidates, drafts, cancellationToken);
-            AddCandidateView(request.AnalysisResult.LargestIdentityCandidates,
-                AnalysisCandidateScope.IdentityGroup, request, capacity, indexes, classifier,
-                validatedCandidates, drafts, cancellationToken);
-            AddCandidateView(request.AnalysisResult.LargestFileCandidates,
-                AnalysisCandidateScope.File, request, capacity, indexes, classifier,
-                validatedCandidates, drafts, cancellationToken);
-            AddCandidateView(request.AnalysisResult.LargestUnknownCandidates,
-                null, request, capacity, indexes, classifier, validatedCandidates, drafts, cancellationToken);
-            AddCacheFindings(request, capacity, indexes, validatedCandidates, drafts, cancellationToken);
+            if (request.AccountingResult.CompactSnapshot is { } snapshot)
+            {
+                CompactAccountingEvidence evidence = BuildCompactAccountingEvidence(
+                    request, snapshot, capacity, cancellationToken);
+                AddCompactCandidateView(request.AnalysisResult.LargestHierarchyCandidates,
+                    AnalysisCandidateScope.HierarchyNode, request, capacity, evidence, classifier,
+                    validatedCandidates, drafts, cancellationToken);
+                AddCompactCandidateView(request.AnalysisResult.LargestIdentityCandidates,
+                    AnalysisCandidateScope.IdentityGroup, request, capacity, evidence, classifier,
+                    validatedCandidates, drafts, cancellationToken);
+                AddCompactCandidateView(request.AnalysisResult.LargestFileCandidates,
+                    AnalysisCandidateScope.File, request, capacity, evidence, classifier,
+                    validatedCandidates, drafts, cancellationToken);
+                AddCompactCandidateView(request.AnalysisResult.LargestUnknownCandidates,
+                    null, request, capacity, evidence, classifier, validatedCandidates, drafts, cancellationToken);
+                AddCompactCacheFindings(evidence, validatedCandidates, drafts);
+            }
+            else
+            {
+                AccountingIndexes indexes = BuildAccountingIndexes(request, cancellationToken);
+                AddCandidateView(request.AnalysisResult.LargestHierarchyCandidates,
+                    AnalysisCandidateScope.HierarchyNode, request, capacity, indexes, classifier,
+                    validatedCandidates, drafts, cancellationToken);
+                AddCandidateView(request.AnalysisResult.LargestIdentityCandidates,
+                    AnalysisCandidateScope.IdentityGroup, request, capacity, indexes, classifier,
+                    validatedCandidates, drafts, cancellationToken);
+                AddCandidateView(request.AnalysisResult.LargestFileCandidates,
+                    AnalysisCandidateScope.File, request, capacity, indexes, classifier,
+                    validatedCandidates, drafts, cancellationToken);
+                AddCandidateView(request.AnalysisResult.LargestUnknownCandidates,
+                    null, request, capacity, indexes, classifier, validatedCandidates, drafts, cancellationToken);
+                AddCacheFindings(request, capacity, indexes, validatedCandidates, drafts, cancellationToken);
+            }
 
             int remaining = request.Options.MaximumTotalFindings - categories.Count;
             if (remaining == 0)
@@ -171,6 +193,107 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         return new AccountingIndexes(groups, hierarchy);
     }
 
+    private static CompactAccountingEvidence BuildCompactAccountingEvidence(UniversalFindingRequest request,
+        CompactAccountingSnapshot snapshot, long? capacity, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<StorageAnalysisCandidate>[] views =
+        [
+            request.AnalysisResult.LargestHierarchyCandidates,
+            request.AnalysisResult.LargestIdentityCandidates,
+            request.AnalysisResult.LargestFileCandidates,
+            request.AnalysisResult.LargestUnknownCandidates,
+        ];
+        var selected = new Dictionary<string, StorageHierarchyNode?>(StringComparer.Ordinal);
+        foreach (IReadOnlyList<StorageAnalysisCandidate> view in views)
+        {
+            if (view.Count > request.AnalysisRequest.Options.CandidateLimit) throw new InputMismatchException();
+            foreach (StorageAnalysisCandidate candidate in view)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (candidate.Scope != AnalysisCandidateScope.HierarchyNode) continue;
+                if (candidate.RelativePaths.Count != 1 || candidate.ObjectIdentity is not null ||
+                    !UniversalFindingPolicies.IsCanonicalRelativePath(candidate.RelativePaths[0]))
+                    throw new InputMismatchException();
+                selected.TryAdd(candidate.RelativePaths[0], null);
+            }
+        }
+
+        string[] acceptedRoots = CacheRoots(request);
+        var cache = new BoundedCacheDraftSet(request.Options.MaximumFindingsPerView);
+        var selectedCache = new List<FindingDraft>(selected.Count);
+        StorageHierarchyNode root = request.AccountingResult.Root ?? throw new InputMismatchException();
+        if (root.RelativePath.Length != 0) throw new InputMismatchException();
+        var stack = new Stack<(StorageHierarchyNode Node, string Parent)>();
+        stack.Push((root, string.Empty));
+        int visited = 0;
+        while (stack.TryPop(out (StorageHierarchyNode Node, string Parent) item))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            visited = checked(visited + 1);
+            if (visited > request.Options.MaximumHierarchyNodes) throw new ResourceLimitException();
+            string path = item.Node.RelativePath;
+            if (path.Length != 0 && (!UniversalFindingPolicies.IsCanonicalRelativePath(path) ||
+                !UniversalFindingPolicies.IsDescendantPath(path, item.Parent)))
+                throw new InputMismatchException();
+            if (selected.TryGetValue(path, out StorageHierarchyNode? existing))
+            {
+                if (existing is not null) throw new InputMismatchException();
+                selected[path] = item.Node;
+            }
+            FindingDraft? cacheDraft = CreateCacheDraft(item.Node, acceptedRoots, capacity);
+            if (cacheDraft is not null)
+            {
+                cache.Add(cacheDraft);
+                if (selected.ContainsKey(path)) selectedCache.Add(cacheDraft);
+            }
+            for (int index = item.Node.Children.Count - 1; index >= 0; index--)
+                stack.Push((item.Node.Children[index], path));
+        }
+        if (selected.Values.Any(node => node is null)) throw new InputMismatchException();
+        return new CompactAccountingEvidence(snapshot, selected, cache.ToArray(), selectedCache.ToArray());
+    }
+
+    private static string[] CacheRoots(UniversalFindingRequest request)
+    {
+        VolumeIdentity volume = request.AnalysisRequest.SystemVolume.VolumeIdentity;
+        string[] absoluteRoots = request.AnalysisRequest.ClassificationContext.CurrentUserAppDataRoots
+            .Concat(request.AnalysisRequest.ClassificationContext.ProgramDataRoot is { } programData
+                ? [programData] : Array.Empty<string>())
+            .ToArray();
+        var acceptedRoots = new string[absoluteRoots.Length];
+        for (int index = 0; index < absoluteRoots.Length; index++)
+        {
+            if (!UniversalFindingPolicies.TryGetVolumeRelativePath(absoluteRoots[index], volume,
+                out string relativeRoot))
+                throw new InputMismatchException();
+            acceptedRoots[index] = relativeRoot;
+        }
+        return acceptedRoots;
+    }
+
+    private static FindingDraft? CreateCacheDraft(StorageHierarchyNode node,
+        IReadOnlyList<string> acceptedRoots, long? capacity)
+    {
+        if (node.RelativePath.Length == 0 ||
+            !UniversalFindingPolicies.IsCacheLikeRelativePath(node.RelativePath, acceptedRoots)) return null;
+        var facets = new List<FindingFacet> { FindingFacet.CacheLike };
+        if (UniversalFindingPolicies.IsLarge(node.Aggregate.InclusiveAttributedObservedAllocatedBytes, capacity))
+            facets.Add(FindingFacet.Large);
+        var evidence = new List<Evidence>();
+        AddEvidence(evidence, new Evidence("finding.cache_like.application_data_component",
+            "An exact cache path component occurs under trusted application-data context.", Confidence.Medium));
+        AddEvidence(evidence, new Evidence("finding.scope.hierarchy",
+            "This finding is a bounded universal analysis view.", Confidence.Verified));
+        AddEvidence(evidence, ReclaimEvidence());
+        AddEvidence(evidence, AllocatedEvidence());
+        if (facets.Contains(FindingFacet.Large)) AddEvidence(evidence, LargeEvidence());
+        return new FindingDraft(
+            $"hierarchy:{node.RelativePath}", FindingScope.HierarchyArea, FindingCategory.ApplicationData,
+            [node.RelativePath], null, node.Aggregate.FileCount, node.Aggregate.DirectoryCount,
+            node.Aggregate.VisibleLogicalMeasuredBytes, node.Aggregate.InclusiveAttributedObservedAllocatedBytes,
+            node.Aggregate.VisibleLogicalMeasuredBytes, facets, evidence, Confidence.Medium);
+    }
+
     private static void ValidateGroupCandidate(StorageAnalysisCandidate candidate, AllocationGroup group)
     {
         if (!Equals(candidate.ObjectIdentity, group.Identity) || group.Reasons != AccountingReason.None ||
@@ -244,6 +367,136 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
         foreach (FindingDraft draft in merged.Values) bounded.Add(draft);
 
         foreach (FindingDraft draft in bounded.ToArray()) Merge(combined, draft);
+    }
+
+    private static void AddCompactCandidateView(
+        IReadOnlyList<StorageAnalysisCandidate> candidates,
+        AnalysisCandidateScope? expectedScope,
+        UniversalFindingRequest request,
+        long? capacity,
+        CompactAccountingEvidence accounting,
+        DeterministicClassificationEngine classifier,
+        IDictionary<string, FindingDraft> allValidated,
+        IDictionary<string, FindingDraft> combined,
+        CancellationToken cancellationToken)
+    {
+        if (candidates.Count > request.AnalysisRequest.Options.CandidateLimit) throw new InputMismatchException();
+        var merged = new Dictionary<string, FindingDraft>(StringComparer.Ordinal);
+        foreach (StorageAnalysisCandidate candidate in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (expectedScope is not null && candidate.Scope != expectedScope) throw new InputMismatchException();
+            FindingDraft? draft = FromCompactCandidate(candidate, request, capacity, accounting, classifier,
+                cancellationToken);
+            if (draft is null) continue;
+            Merge(allValidated, draft);
+            Merge(merged, draft);
+        }
+        var bounded = new BoundedFindingSet<FindingDraft>(
+            request.Options.MaximumFindingsPerView, FindingDraftComparer.Instance, item => item.Key);
+        foreach (FindingDraft draft in merged.Values) bounded.Add(draft);
+        foreach (FindingDraft draft in bounded.ToArray()) Merge(combined, draft);
+    }
+
+    private static FindingDraft? FromCompactCandidate(StorageAnalysisCandidate candidate,
+        UniversalFindingRequest request, long? capacity, CompactAccountingEvidence accounting,
+        DeterministicClassificationEngine classifier, CancellationToken cancellationToken)
+    {
+        if (!UniversalCategories.Contains(candidate.PrimaryCategory) ||
+            candidate.Evidence.Any(item => item.Code.StartsWith("finding.", StringComparison.Ordinal)))
+            throw new InputMismatchException();
+        FindingScope scope;
+        string key;
+        long? logicalBytes;
+        long allocatedBytes;
+        switch (candidate.Scope)
+        {
+            case AnalysisCandidateScope.HierarchyNode:
+                if (candidate.RelativePaths.Count != 1 || candidate.ObjectIdentity is not null ||
+                    !accounting.SelectedHierarchy.TryGetValue(candidate.RelativePaths[0],
+                        out StorageHierarchyNode? node) || node is null)
+                    throw new InputMismatchException();
+                ValidateHierarchyCandidate(candidate, node);
+                ValidateClassification(candidate, [candidate.RelativePaths[0]], request, classifier);
+                scope = FindingScope.HierarchyArea;
+                key = $"hierarchy:{candidate.RelativePaths[0]}";
+                logicalBytes = node.Aggregate.VisibleLogicalMeasuredBytes;
+                allocatedBytes = node.Aggregate.InclusiveAttributedObservedAllocatedBytes;
+                break;
+            case AnalysisCandidateScope.IdentityGroup:
+            case AnalysisCandidateScope.File:
+                if (candidate.ObjectIdentity is null ||
+                    !accounting.Snapshot.TryFindIdentity(candidate.ObjectIdentity, out int identityId))
+                    throw new InputMismatchException();
+                CompactAccountingSnapshot.IdentityFact identity = accounting.Snapshot.GetIdentity(identityId);
+                if (identity.Reasons != AccountingReason.None ||
+                    identity.Measurement.Availability != StorageMeasurementAvailability.Available ||
+                    identity.Measurement.ReportedAllocatedBytes is not { } eligible)
+                    throw new InputMismatchException();
+                ReadOnlySpan<int> pathIds = accounting.Snapshot.GetIdentityPaths(identityId);
+                var paths = new string[pathIds.Length];
+                for (int index = 0; index < pathIds.Length; index++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    paths[index] = accounting.Snapshot.GetPath(pathIds[index]).RelativePath;
+                    if (!UniversalFindingPolicies.IsCanonicalRelativePath(paths[index]))
+                        throw new InputMismatchException();
+                }
+                Array.Sort(paths, StringComparer.Ordinal);
+                if (!Equals(candidate.ObjectIdentity, identity.Identity) ||
+                    !candidate.RelativePaths.SequenceEqual(paths, StringComparer.Ordinal) ||
+                    candidate.FileCount != 1 || candidate.DirectoryCount != 0 ||
+                    candidate.SizeEvidence.RawReportedAllocatedBytes != eligible ||
+                    candidate.SizeEvidence.ObservedAttributedAllocatedBytes != eligible ||
+                    candidate.SizeEvidence.UncertainMeasuredAllocatedBytes != 0)
+                    throw new InputMismatchException();
+                ValidateClassification(candidate, paths, request, classifier);
+                allocatedBytes = eligible;
+                logicalBytes = null;
+                if (candidate.Scope == AnalysisCandidateScope.IdentityGroup)
+                {
+                    if (paths.Length == 1) return null;
+                    scope = FindingScope.IdentityGroup;
+                    key = $"identity:{identity.Identity.VolumeIdentity.Id:D}:{identity.Identity.ObjectId:D}";
+                }
+                else
+                {
+                    if (paths.Length != 1 ||
+                        accounting.Snapshot.GetPath(pathIds[0]).ObjectKind != StorageObjectKind.File)
+                        throw new InputMismatchException();
+                    scope = FindingScope.File;
+                    key = $"file:{identity.Identity.VolumeIdentity.Id:D}:{identity.Identity.ObjectId:D}:{paths[0]}";
+                }
+                break;
+            default:
+                throw new InputMismatchException();
+        }
+
+        var facets = candidate.Facets.Where(IsSupportedFacet).ToList();
+        if (UniversalFindingPolicies.IsLarge(candidate.SizeEvidence.ObservedAttributedAllocatedBytes, capacity) &&
+            !facets.Contains(FindingFacet.Large))
+            facets.Add(FindingFacet.Large);
+        var evidence = candidate.Evidence.ToList();
+        AddEvidence(evidence, new Evidence($"finding.scope.{ScopeCode(scope)}",
+            "This finding is a bounded universal analysis view.", Confidence.Verified));
+        AddEvidence(evidence, ReclaimEvidence());
+        AddEvidence(evidence, AllocatedEvidence());
+        if (facets.Contains(FindingFacet.Large)) AddEvidence(evidence, LargeEvidence());
+        return new FindingDraft(key, scope, candidate.PrimaryCategory, candidate.RelativePaths,
+            candidate.ObjectIdentity, candidate.FileCount, candidate.DirectoryCount,
+            logicalBytes, allocatedBytes, candidate.SizeEvidence.VisibleLogicalBytes,
+            facets, evidence, candidate.ClassificationConfidence);
+    }
+
+    private static void AddCompactCacheFindings(CompactAccountingEvidence accounting,
+        IDictionary<string, FindingDraft> allValidated, IDictionary<string, FindingDraft> combined)
+    {
+        foreach (FindingDraft draft in accounting.SelectedCacheDrafts) Merge(allValidated, draft);
+        foreach (FindingDraft draft in accounting.CacheDrafts)
+        {
+            Merge(allValidated, draft);
+            Merge(combined, allValidated[draft.Key]);
+        }
     }
 
     private static FindingDraft? FromCandidate(
@@ -638,6 +891,34 @@ public sealed class UniversalFindingBuilder : IUniversalFindingBuilder
     private sealed record AccountingIndexes(
         IReadOnlyDictionary<StorageObjectIdentity, AllocationGroup> Groups,
         IReadOnlyDictionary<string, StorageHierarchyNode> Hierarchy);
+
+    private sealed record CompactAccountingEvidence(
+        CompactAccountingSnapshot Snapshot,
+        IReadOnlyDictionary<string, StorageHierarchyNode?> SelectedHierarchy,
+        IReadOnlyList<FindingDraft> CacheDrafts,
+        IReadOnlyList<FindingDraft> SelectedCacheDrafts);
+
+    private sealed class BoundedCacheDraftSet
+    {
+        private readonly int limit;
+        private readonly SortedSet<FindingDraft> values = new(FindingDraftComparer.Instance);
+        private readonly Dictionary<string, FindingDraft> retained = new(StringComparer.Ordinal);
+
+        internal BoundedCacheDraftSet(int limit) => this.limit = limit;
+
+        internal void Add(FindingDraft draft)
+        {
+            if (retained.ContainsKey(draft.Key)) throw new InputMismatchException();
+            retained.Add(draft.Key, draft);
+            if (!values.Add(draft)) throw new InputMismatchException();
+            if (values.Count <= limit) return;
+            FindingDraft removed = values.Max!;
+            values.Remove(removed);
+            retained.Remove(removed.Key);
+        }
+
+        internal FindingDraft[] ToArray() => values.ToArray();
+    }
 
     private sealed class FindingDraftComparer : IComparer<FindingDraft>
     {

@@ -7,6 +7,7 @@ using CDriveSmartClean.Application.Scanning.Observations;
 using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
 using CDriveSmartClean.Domain.Analysis;
+using CDriveSmartClean.Domain.Findings;
 using CDriveSmartClean.Domain.Storage;
 using CDriveSmartClean.Scan.Accounting;
 using Xunit;
@@ -108,6 +109,88 @@ public sealed class CompactStorageAnalysisTests
                 Request(), Accounting([Entry("a", 1, Identity(1))]), cancellation.Token));
     }
 
+    [Fact]
+    public void CompactAndLegacyFindingPathsAreEquivalentAndProjectionRemainsLazy()
+    {
+        StorageEntry[] entries = RepresentativeEntries();
+        StorageAnalysisRequest analysisRequest = Request();
+        StorageAccountingResult compactAccounting = Accounting(entries, inconsistent: true);
+        Assert.Equal(0, compactAccounting.ProjectedAllocationGroupCount);
+        StorageAnalysisResult analysis = AnalyzeCompact(analysisRequest, compactAccounting);
+        Assert.Equal(0, compactAccounting.ProjectedAllocationGroupCount);
+        var builder = new UniversalFindingBuilder();
+        var compactRequest = new UniversalFindingRequest(Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            analysisRequest, analysis, compactAccounting);
+        UniversalFindingResult compact = builder.Build(compactRequest, CancellationToken.None);
+        Assert.Equal(0, compactAccounting.ProjectedAllocationGroupCount);
+
+        StorageAccountingResult source = Accounting(entries, inconsistent: true);
+        var eager = new StorageAccountingResult(source.Summary, source.Root, source.AllocationGroups,
+            source.Reconciliation, source.TraversalCompleted, source.IssueCounts);
+        var legacyRequest = new UniversalFindingRequest(compactRequest.ScanSessionId,
+            analysisRequest, analysis, eager);
+        UniversalFindingResult legacy = builder.Build(legacyRequest, CancellationToken.None);
+        Assert.Equal(Serialize(legacy), Serialize(compact));
+    }
+
+    [Fact]
+    public void IdentityCountAboveHierarchyDefaultDoesNotConsumeGroupProjectionOrLimit()
+    {
+        const int count = 150_001;
+        UniversalFindingRequest request = LargeIdentityFindingRequest(count);
+        UniversalFindingResult result = new UniversalFindingBuilder().Build(request, CancellationToken.None);
+        Assert.NotEqual(AnalysisQuality.Unavailable, result.Quality);
+        Assert.False(result.Reasons.HasFlag(UniversalFindingReason.ResourceLimit));
+        Assert.Equal(0, request.AccountingResult.ProjectedAllocationGroupCount);
+    }
+
+    [Fact]
+    public void CompactCacheRetentionIsBoundedAndDeterministic()
+    {
+        StorageHierarchyNode[] nodes = Enumerable.Range(0, 40).Select(index => new StorageHierarchyNode(
+            $"Users\\Current\\AppData\\Local\\Vendor{index:D2}\\Cache",
+            new StorageAggregate(visibleLogicalMeasuredBytes: index, rawReportedAllocatedBytes: index,
+                inclusiveAttributedObservedAllocatedBytes: index, fileCount: 1), [])).ToArray();
+        var options = new UniversalFindingOptions(5, 100, 100);
+        UniversalFindingResult first = new UniversalFindingBuilder().Build(
+            EmptyCompactFindingRequest(new StorageHierarchyNode("", new StorageAggregate(), nodes), options),
+            CancellationToken.None);
+        UniversalFindingResult second = new UniversalFindingBuilder().Build(
+            EmptyCompactFindingRequest(new StorageHierarchyNode("", new StorageAggregate(), nodes.Reverse()), options),
+            CancellationToken.None);
+        Finding[] caches = first.Findings.Where(finding => finding.Facets.Contains(FindingFacet.CacheLike)).ToArray();
+        Assert.Equal(5, caches.Length);
+        Assert.Equal([39L, 38L, 37L, 36L, 35L], caches.Select(item => item.SizeMetrics.AllocatedBytes));
+        Assert.Equal(Serialize(first), Serialize(second));
+    }
+
+    [Fact]
+    public void CompactHierarchyLimitStillFailsClosedWithoutPartialFindings()
+    {
+        StorageHierarchyNode[] children =
+        [
+            new("a", new StorageAggregate(), []),
+            new("b", new StorageAggregate(), []),
+        ];
+        UniversalFindingRequest request = EmptyCompactFindingRequest(
+            new StorageHierarchyNode("", new StorageAggregate(), children),
+            new UniversalFindingOptions(5, 100, 2));
+        UniversalFindingResult result = new UniversalFindingBuilder().Build(request, CancellationToken.None);
+        Assert.Equal(AnalysisQuality.Unavailable, result.Quality);
+        Assert.True(result.Reasons.HasFlag(UniversalFindingReason.ResourceLimit));
+        Assert.Empty(result.Findings);
+    }
+
+    [Fact]
+    public void CompactFindingCancellationIsAuthoritative()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => new UniversalFindingBuilder().Build(
+            EmptyCompactFindingRequest(new StorageHierarchyNode("", new StorageAggregate(), [])),
+            cancellation.Token));
+    }
+
     private static StorageEntry[] RepresentativeEntries()
     {
         StorageObjectIdentity alias = Identity(100);
@@ -119,6 +202,7 @@ public sealed class CompactStorageAnalysisTests
             Entry(@"mystery\unknown.dat", 80, Identity(3)),
             Entry(@"Users\Current\AppData\Local\cloud.dat", 70, Identity(4),
                 StorageEntryAttributes.RecallOnOpen),
+            Entry(@"Users\Current\AppData\Local\Vendor\Cache\item.bin", 65, Identity(10)),
             Entry(@"no-identity.dat", 60, null),
             Entry(@"Program Files\Shared\alias.dat", 50, alias),
             Entry(@"Users\Current\alias.dat", 50, alias),
@@ -185,4 +269,65 @@ public sealed class CompactStorageAnalysisTests
     }
 
     private static string Serialize(StorageAnalysisResult result) => JsonSerializer.Serialize(result);
+
+    private static string Serialize(UniversalFindingResult result) => JsonSerializer.Serialize(result);
+
+    private static UniversalFindingRequest LargeIdentityFindingRequest(int count)
+    {
+        var paths = new CompactAccountingSnapshot.PathFact[count];
+        var identities = new CompactAccountingSnapshot.IdentityFact[count];
+        var identityPaths = new int[count];
+        var pathIdentities = new int[count];
+        StorageMeasurement measurement = new(1, 1, StorageMeasurementAvailability.Available,
+            StorageMeasurementQuality.FileSystemReported,
+            StorageMeasurementSource.WindowsFileIdExtendedDirectoryInfo,
+            StorageMeasurementScope.FileContent, StorageMeasurementFreshness.LivePointInTime);
+        for (int index = 0; index < count; index++)
+        {
+            string path = $"f{index:D6}";
+            identityPaths[index] = index;
+            pathIdentities[index] = index;
+            paths[index] = new CompactAccountingSnapshot.PathFact(path, measurement, StorageObjectKind.File,
+                ReparseKind.None, StorageEntryAttributes.None, false, index, 1);
+            identities[index] = new CompactAccountingSnapshot.IdentityFact(Identity(index + 1), measurement,
+                StorageObjectKind.File, ReparseKind.None, StorageEntryAttributes.None, AccountingReason.None,
+                "", index, 1);
+        }
+        var snapshot = new CompactAccountingSnapshot(paths, identities, identityPaths, pathIdentities,
+            CancellationToken.None);
+        var aggregate = new StorageAggregate(visibleLogicalMeasuredBytes: count,
+            rawReportedAllocatedBytes: count, inclusiveAttributedObservedAllocatedBytes: count,
+            fileCount: count, uniqueIdentityCount: count);
+        var root = new StorageHierarchyNode("", aggregate, []);
+        var summary = new StorageAccountingSummary(aggregate, AccountingReason.None);
+        VolumeSpaceSnapshot space = Space(count + 10L, count);
+        var accounting = new StorageAccountingResult(summary, root, snapshot,
+            new VolumeReconciliation(space, space, summary, true), true, EmptyIssues());
+        CategorySummary[] summaries = Enum.GetValues<FindingCategory>().Select(category => new CategorySummary(
+            category, category == FindingCategory.Unknown ? count : 0,
+            category == FindingCategory.Unknown ? count : 0, 0,
+            category == FindingCategory.Unknown ? count : 0,
+            category == FindingCategory.Unknown ? count : 0,
+            AnalysisQuality.Complete, AnalysisReason.None)).ToArray();
+        var analysis = new StorageAnalysisResult(AnalysisQuality.Complete, AnalysisReason.None,
+            summary.Quality, summary.Reasons, summaries, [], [], [], []);
+        return new UniversalFindingRequest(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            Request(), analysis, accounting);
+    }
+
+    private static UniversalFindingRequest EmptyCompactFindingRequest(StorageHierarchyNode root,
+        UniversalFindingOptions? options = null)
+    {
+        var snapshot = new CompactAccountingSnapshot([], [], [], [], CancellationToken.None);
+        var summary = new StorageAccountingSummary(root.Aggregate, AccountingReason.None);
+        VolumeSpaceSnapshot space = Space(1_000_000, 0);
+        var accounting = new StorageAccountingResult(summary, root, snapshot,
+            new VolumeReconciliation(space, space, summary, true), true, EmptyIssues());
+        CategorySummary[] summaries = Enum.GetValues<FindingCategory>().Select(category => new CategorySummary(
+            category, 0, 0, 0, 0, 0, AnalysisQuality.Complete, AnalysisReason.None)).ToArray();
+        var analysis = new StorageAnalysisResult(AnalysisQuality.Complete, AnalysisReason.None,
+            summary.Quality, summary.Reasons, summaries, [], [], [], []);
+        return new UniversalFindingRequest(Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            Request(), analysis, accounting, options);
+    }
 }
