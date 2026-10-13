@@ -21,7 +21,7 @@ public sealed class UniversalFindingContractsTests
         var options = new UniversalFindingOptions();
         Assert.Equal(25, options.MaximumFindingsPerView);
         Assert.Equal(100, options.MaximumTotalFindings);
-        Assert.Equal(100_000, options.MaximumHierarchyNodes);
+        Assert.Equal(250_000, options.MaximumHierarchyNodes);
     }
 
     [Theory]
@@ -98,7 +98,7 @@ public sealed class UniversalFindingContractsTests
     [Fact]
     public void ExportedTypeCountsRemainExact()
     {
-        Assert.Equal(44, typeof(IUniversalFindingBuilder).Assembly.GetExportedTypes().Length);
+        Assert.Equal(47, typeof(IUniversalFindingBuilder).Assembly.GetExportedTypes().Length);
         Assert.Equal(30, typeof(FindingScope).Assembly.GetExportedTypes().Length);
     }
 

@@ -14,5 +14,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\CDriveSmartClean.Analysis\CDriveSmartClean.Analysis.csproj" />
+    <ProjectReference Include="..\..\src\CDriveSmartClean.Scan\CDriveSmartClean.Scan.csproj" />
   </ItemGroup>
 </Project>

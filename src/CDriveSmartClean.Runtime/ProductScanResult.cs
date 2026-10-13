@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CDriveSmartClean.Application.Analysis;
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
@@ -57,6 +58,9 @@ public sealed class ProductScanResult
         TraversalCompleted = accountingResult.TraversalCompleted;
         IssueCounts = new ReadOnlyDictionary<StorageTraversalIssueKind, long>(issueCounts);
         Findings = new ReadOnlyCollection<Finding>(findings);
+        ResourceLimitDiagnostic = accountingResult.ResourceLimitDiagnostic ??
+            analysisResult.ResourceLimitDiagnostic ??
+            findingResult.ResourceLimitDiagnostic;
     }
 
     public Guid ScanSessionId { get; }
@@ -75,4 +79,5 @@ public sealed class ProductScanResult
     public bool TraversalCompleted { get; }
     public IReadOnlyDictionary<StorageTraversalIssueKind, long> IssueCounts { get; }
     public IReadOnlyList<Finding> Findings { get; }
+    public ResourceLimitDiagnostic? ResourceLimitDiagnostic { get; }
 }

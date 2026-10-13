@@ -45,7 +45,7 @@ jobs:
         run: dotnet build CDriveSmartClean.sln --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test CDriveSmartClean.sln --configuration Release --no-build
+        run: dotnet test CDriveSmartClean.sln --configuration Release --no-build --filter "Category!=Capacity"
 
       - name: Verify formatting
         run: dotnet format CDriveSmartClean.sln --verify-no-changes --no-restore

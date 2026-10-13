@@ -5,7 +5,7 @@ public sealed class StorageAnalysisOptions
     public const int MaximumCandidateLimit = 1000;
     public const long DefaultAnalysisStateBudget = 256L * 1024 * 1024;
 
-    public StorageAnalysisOptions(int maximumPathStates = 1_000_000, int maximumIdentityStates = 1_000_000,
+    public StorageAnalysisOptions(int maximumPathStates = 1_500_000, int maximumIdentityStates = 1_500_000,
         int candidateLimit = 100, long analysisStateBudget = DefaultAnalysisStateBudget)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumPathStates);

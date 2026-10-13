@@ -9,7 +9,15 @@ public sealed class AllocationGroup
         ArgumentNullException.ThrowIfNull(paths);
         ArgumentNullException.ThrowIfNull(attributionPath);
         if (eligibleReportedAllocatedBytes < 0) throw new ArgumentOutOfRangeException(nameof(eligibleReportedAllocatedBytes));
-        string[] ordered = paths.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        string[] ordered;
+        if (paths is string[] { Length: 1 } single)
+        {
+            ordered = [single[0]];
+        }
+        else
+        {
+            ordered = paths.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        }
         if (ordered.Length == 0 || ordered.Any(string.IsNullOrWhiteSpace)) throw new ArgumentException("Paths are required.", nameof(paths));
         if (reasons != AccountingReason.None && eligibleReportedAllocatedBytes is not null)
             throw new ArgumentException("Ineligible evidence cannot have authoritative allocation.");

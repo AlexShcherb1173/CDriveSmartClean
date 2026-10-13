@@ -1,4 +1,5 @@
 using CDriveSmartClean.Application.Analysis;
+using CDriveSmartClean.Application.ResourceLimits;
 using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
@@ -128,5 +129,107 @@ public sealed class ProductScanContractTests
         Assert.True(typeof(ProductScanResult).IsSealed);
         Assert.DoesNotContain(typeof(SystemVolumeScanWorkflow).Assembly.GetTypes(),
             type => type.GetInterfaces().Any(contract => contract.Name == "IStorageScanner"));
+    }
+
+    [Fact]
+    public void AccountingPathLimitDiagnosticReachesProductResultUnchanged()
+    {
+        var diagnostic = new ResourceLimitDiagnostic(ResourceLimitStage.Accounting,
+            ResourceLimitDimension.MaximumDistinctPaths, 2, 3);
+        Assert.Same(diagnostic, Result(accountingDiagnostic: diagnostic).ResourceLimitDiagnostic);
+    }
+
+    [Fact]
+    public void AccountingBudgetDiagnosticWinsOverDownstreamDirectDiagnostics()
+    {
+        var accounting = new ResourceLimitDiagnostic(ResourceLimitStage.Accounting,
+            ResourceLimitDimension.AccountingStateBudget, 100, 101);
+        var analysis = new ResourceLimitDiagnostic(ResourceLimitStage.Analysis,
+            ResourceLimitDimension.MaximumPathStates, 2, 3);
+        var findings = new ResourceLimitDiagnostic(ResourceLimitStage.Findings,
+            ResourceLimitDimension.MaximumHierarchyNodes, 2, 3);
+        Assert.Same(accounting, Result(accounting, analysis, findings).ResourceLimitDiagnostic);
+    }
+
+    [Fact]
+    public void AnalysisPathLimitDiagnosticReachesProductResult()
+    {
+        var diagnostic = new ResourceLimitDiagnostic(ResourceLimitStage.Analysis,
+            ResourceLimitDimension.MaximumPathStates, 2, 3);
+        Assert.Same(diagnostic, Result(analysisDiagnostic: diagnostic).ResourceLimitDiagnostic);
+    }
+
+    [Fact]
+    public void AnalysisBudgetDiagnosticReachesProductResult()
+    {
+        var diagnostic = new ResourceLimitDiagnostic(ResourceLimitStage.Analysis,
+            ResourceLimitDimension.AnalysisStateBudget, 100, 101);
+        Assert.Same(diagnostic, Result(analysisDiagnostic: diagnostic).ResourceLimitDiagnostic);
+    }
+
+    [Fact]
+    public void FindingHierarchyLimitDiagnosticReachesProductResult()
+    {
+        var diagnostic = new ResourceLimitDiagnostic(ResourceLimitStage.Findings,
+            ResourceLimitDimension.MaximumHierarchyNodes, 2, 3);
+        Assert.Same(diagnostic, Result(findingDiagnostic: diagnostic).ResourceLimitDiagnostic);
+    }
+
+    [Fact]
+    public void ProductResultHasNoDiagnosticWithoutDirectResourceLimit()
+    {
+        Assert.Null(Result().ResourceLimitDiagnostic);
+    }
+
+    private static ProductScanResult Result(
+        ResourceLimitDiagnostic? accountingDiagnostic = null,
+        ResourceLimitDiagnostic? analysisDiagnostic = null,
+        ResourceLimitDiagnostic? findingDiagnostic = null)
+    {
+        Guid session = Guid.NewGuid();
+        var volume = new VolumeIdentity(Guid.NewGuid());
+        var descriptor = new SystemVolumeDescriptor(volume, @"C:\");
+        var aggregate = new StorageAggregate();
+        bool accountingUnavailable = accountingDiagnostic is not null;
+        var summary = new StorageAccountingSummary(
+            accountingUnavailable ? null : aggregate,
+            accountingUnavailable ? AccountingReason.ResourceLimit : AccountingReason.None);
+        StorageHierarchyNode? root = accountingUnavailable
+            ? null
+            : new StorageHierarchyNode(string.Empty, aggregate, []);
+        CompactAccountingSnapshot? compactSnapshot = accountingUnavailable
+            ? null
+            : new CompactAccountingSnapshot([], [], [], [], CancellationToken.None);
+        VolumeSpaceSnapshot space = VolumeSpaceSnapshot.Available(
+            volume, DateTimeOffset.UnixEpoch, 100, 100, 100, 100, 0, 0, 0);
+        var accounting = new StorageAccountingResult(summary, root, compactSnapshot,
+            new VolumeReconciliation(space, space, summary, true), true,
+            new Dictionary<StorageTraversalIssueKind, long>(), accountingDiagnostic);
+
+        bool analysisUnavailable = accountingUnavailable || analysisDiagnostic is not null;
+        AnalysisReason analysisReasons = analysisDiagnostic is not null
+            ? AnalysisReason.ResourceLimit
+            : accountingUnavailable
+                ? AnalysisReason.UpstreamAccountingUnavailable
+                : AnalysisReason.None;
+        CategorySummary[] categories = analysisUnavailable
+            ? []
+            : Enum.GetValues<FindingCategory>().Select(category => new CategorySummary(
+                category, 0, 0, 0, 0, 0, AnalysisQuality.Complete, AnalysisReason.None)).ToArray();
+        var analysis = new StorageAnalysisResult(
+            analysisUnavailable ? AnalysisQuality.Unavailable : AnalysisQuality.Complete,
+            analysisReasons, summary.Quality, summary.Reasons, categories, [], [], [], [],
+            analysisDiagnostic);
+
+        bool findingsUnavailable = analysisUnavailable || findingDiagnostic is not null;
+        UniversalFindingReason findingReasons = findingDiagnostic is not null
+            ? UniversalFindingReason.ResourceLimit
+            : analysisUnavailable
+                ? UniversalFindingReason.UpstreamAnalysisUnavailable
+                : UniversalFindingReason.None;
+        var findings = new UniversalFindingResult(
+            findingsUnavailable ? AnalysisQuality.Unavailable : AnalysisQuality.Complete,
+            findingReasons, analysis.Quality, analysis.Reasons, [], findingDiagnostic);
+        return new ProductScanResult(session, descriptor, accounting, analysis, findings);
     }
 }
