@@ -5,7 +5,7 @@ public sealed class UniversalFindingOptions
     public UniversalFindingOptions(
         int maximumFindingsPerView = 25,
         int maximumTotalFindings = 100,
-        int maximumHierarchyNodes = 100_000)
+        int maximumHierarchyNodes = 250_000)
     {
         if (maximumFindingsPerView is <= 0 or > 250)
             throw new ArgumentOutOfRangeException(nameof(maximumFindingsPerView));

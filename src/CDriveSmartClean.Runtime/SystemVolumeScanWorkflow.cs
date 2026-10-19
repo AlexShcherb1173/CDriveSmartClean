@@ -70,21 +70,27 @@ public sealed class SystemVolumeScanWorkflow
             throw new InvalidOperationException("Classification context volume identity contradiction.");
 
         var analysisRequest = new StorageAnalysisRequest(systemVolume, classificationContext, request.AnalysisOptions);
-        IStorageAnalysisSession analysisSession = analyzer.CreateSession(analysisRequest) ??
-            throw new InvalidOperationException("Analyzer returned null session.");
+        bool compactAnalysis = analyzer is ICompactStorageAnalyzer;
+        IStorageAnalysisSession? analysisSession = compactAnalysis
+            ? null
+            : analyzer.CreateSession(analysisRequest) ?? throw new InvalidOperationException("Analyzer returned null session.");
 
         cancellationToken.ThrowIfCancellationRequested();
         progressState.ReportPhase(ProductScanPhase.TraversingAndAccounting);
         var walker = new StorageTreeWalker(storageEnumerator, traversalPolicy);
         var accountingEngine = new StorageAccountingEngine(walker, volumeSpaceProvider, request.AccountingOptions);
         StorageAccountingResult accountingResult = await accountingEngine.AccountAsync(systemVolume,
-            new ProgressForwardingEntrySink(analysisSession, progressState),
+            analysisSession is null
+                ? new ProgressEntrySink(progressState)
+                : new ProgressForwardingEntrySink(analysisSession, progressState),
             new ProgressIssueSink(progressState), cancellationToken).ConfigureAwait(false);
 
         cancellationToken.ThrowIfCancellationRequested();
         progressState.ReportPhase(ProductScanPhase.CompletingAnalysis);
-        StorageAnalysisResult analysisResult = analysisSession.Complete(accountingResult, cancellationToken) ??
-            throw new InvalidOperationException("Analysis session returned null result.");
+        StorageAnalysisResult analysisResult = analysisSession is null
+            ? ((ICompactStorageAnalyzer)analyzer).Analyze(analysisRequest, accountingResult, cancellationToken)
+            : analysisSession.Complete(accountingResult, cancellationToken);
+        if (analysisResult is null) throw new InvalidOperationException("Analyzer returned null result.");
 
         cancellationToken.ThrowIfCancellationRequested();
         progressState.ReportPhase(ProductScanPhase.BuildingFindings);
@@ -109,6 +115,17 @@ public sealed class SystemVolumeScanWorkflow
             await analysisSession.WriteAsync(entry, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             progressState.ObserveEntry(entry);
+        }
+    }
+
+    private sealed class ProgressEntrySink(ProgressState progressState) : IStorageEntrySink
+    {
+        public ValueTask WriteAsync(StorageEntry entry, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+            cancellationToken.ThrowIfCancellationRequested();
+            progressState.ObserveEntry(entry);
+            return ValueTask.CompletedTask;
         }
     }
 
