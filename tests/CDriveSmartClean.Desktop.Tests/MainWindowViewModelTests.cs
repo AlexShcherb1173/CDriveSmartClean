@@ -5,6 +5,7 @@ using CDriveSmartClean.Application.Scanning.Accounting;
 using CDriveSmartClean.Application.Scanning.Traversal;
 using CDriveSmartClean.Application.Scanning.Volumes;
 using CDriveSmartClean.Desktop.Infrastructure;
+using CDriveSmartClean.Desktop.Resources;
 using CDriveSmartClean.Desktop.ViewModels;
 using CDriveSmartClean.Domain;
 using CDriveSmartClean.Domain.Analysis;
@@ -220,17 +221,27 @@ public sealed class MainWindowViewModelTests
         Assert.Equal(["CDriveSmartClean.Runtime"], desktop.Descendants("ProjectReference")
             .Select(item => Path.GetFileNameWithoutExtension(item.Attribute("Include")!.Value)).ToArray());
         Assert.Empty(desktop.Descendants("PackageReference"));
-        Assert.Empty(typeof(MainWindowViewModel).Assembly.GetExportedTypes());
+        Assert.Equal([typeof(Strings)], typeof(MainWindowViewModel).Assembly.GetExportedTypes());
         Assert.Equal(5, typeof(SystemVolumeScanWorkflow).Assembly.GetExportedTypes()
             .Count(type => type.Namespace == "CDriveSmartClean.Runtime"));
 
-        string source = string.Join('\n', Directory.EnumerateFiles(Path.Combine(root, "src/CDriveSmartClean.Desktop"), "*.cs", SearchOption.AllDirectories)
+        string[] sourceFiles = Directory.EnumerateFiles(Path.Combine(root, "src/CDriveSmartClean.Desktop"), "*.cs", SearchOption.AllDirectories)
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-            .Select(File.ReadAllText));
+            .ToArray();
+        string preferenceStorePath = sourceFiles.Single(path => Path.GetFileName(path) == "LanguagePreferenceStore.cs");
+        string source = string.Join('\n', sourceFiles.Where(path => path != preferenceStorePath).Select(File.ReadAllText));
         string[] forbidden = ["File.Delete", "File.Move", "File.Write", "Directory.Delete", "Registry", "Process.",
             "PowerShell", "cmd.exe", "FileStream", "Directory.Enumerate", "DllImport", "LibraryImport", "HOMESERVER",
             "WEB01", "Docker", "Caddy", "Tailscale", "Yandex Cloud", "REG.RU", "cdrivesmartc.tech"];
         Assert.All(forbidden, value => Assert.DoesNotContain(value, source, StringComparison.OrdinalIgnoreCase));
+        string preferenceSource = File.ReadAllText(preferenceStorePath);
+        string[] preferenceForbidden = ["File.Delete", "File.Move", "Directory.Delete", "Directory.Enumerate",
+            "Registry", "Process.", "PowerShell", "cmd.exe", "DllImport", "LibraryImport"];
+        Assert.All(preferenceForbidden,
+            value => Assert.DoesNotContain(value, preferenceSource, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("File.ReadAllText", preferenceSource, StringComparison.Ordinal);
+        Assert.Contains("File.WriteAllText", preferenceSource, StringComparison.Ordinal);
+        Assert.Contains("Directory.CreateDirectory", preferenceSource, StringComparison.Ordinal);
         string xaml = File.ReadAllText(Path.Combine(root, "src/CDriveSmartClean.Desktop/MainWindow.xaml"));
         Assert.Contains("Analysis only", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("Content=\"Delete\"", xaml, StringComparison.OrdinalIgnoreCase);

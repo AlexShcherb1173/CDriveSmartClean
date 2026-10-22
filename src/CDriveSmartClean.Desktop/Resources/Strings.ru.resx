@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="AnalysisOnlyBanner" xml:space="preserve"><value>Только анализ — эта версия CDriveSmartClean не удаляет файлы.</value></data>
+  <data name="Language" xml:space="preserve"><value>Язык</value></data>
+  <data name="LanguageRestartRequired" xml:space="preserve"><value>Перезапустите CDriveSmartClean, чтобы применить язык.</value></data>
+  <data name="StartScan" xml:space="preserve"><value>Начать сканирование</value></data>
+  <data name="Cancel" xml:space="preserve"><value>Отмена</value></data>
+  <data name="State" xml:space="preserve"><value>Состояние</value></data>
+  <data name="ScanProgress" xml:space="preserve"><value>Ход сканирования</value></data>
+  <data name="Phase" xml:space="preserve"><value>Этап</value></data>
+  <data name="ObjectsObserved" xml:space="preserve"><value>Обнаружено объектов</value></data>
+  <data name="RawReportedAllocatedBytes" xml:space="preserve"><value>Учтено на диске</value></data>
+  <data name="TraversalIssuesObserved" xml:space="preserve"><value>Проблемы сканирования</value></data>
+  <data name="Overview" xml:space="preserve"><value>Обзор</value></data>
+  <data name="Findings" xml:space="preserve"><value>Результаты</value></data>
+  <data name="SystemVolume" xml:space="preserve"><value>Системный диск</value></data>
+  <data name="Root" xml:space="preserve"><value>Корень</value></data>
+  <data name="Capacity" xml:space="preserve"><value>Ёмкость</value></data>
+  <data name="Used" xml:space="preserve"><value>Занято</value></data>
+  <data name="Free" xml:space="preserve"><value>Свободно</value></data>
+  <data name="QualityAndCoverage" xml:space="preserve"><value>Качество и полнота</value></data>
+  <data name="CategoryAllocation" xml:space="preserve"><value>Распределение по категориям</value></data>
+  <data name="TraversalIssues" xml:space="preserve"><value>Проблемы сканирования</value></data>
+  <data name="Name" xml:space="preserve"><value>Название</value></data>
+  <data name="Category" xml:space="preserve"><value>Категория</value></data>
+  <data name="Scope" xml:space="preserve"><value>Область</value></data>
+  <data name="Allocated" xml:space="preserve"><value>Занято на диске</value></data>
+  <data name="Logical" xml:space="preserve"><value>Размер данных</value></data>
+  <data name="Reclaim" xml:space="preserve"><value>Можно освободить</value></data>
+  <data name="Risk" xml:space="preserve"><value>Риск</value></data>
+  <data name="RiskConfidence" xml:space="preserve"><value>Уверенность в риске</value></data>
+  <data name="FindingConfidence" xml:space="preserve"><value>Уверенность в результате</value></data>
+  <data name="Protection" xml:space="preserve"><value>Защита</value></data>
+  <data name="Facets" xml:space="preserve"><value>Признаки</value></data>
+  <data name="Path" xml:space="preserve"><value>Путь</value></data>
+  <data name="NotStarted" xml:space="preserve"><value>Не начато</value></data>
+  <data name="NotScanned" xml:space="preserve"><value>Не сканировалось</value></data>
+  <data name="Unavailable" xml:space="preserve"><value>Недоступно</value></data>
+  <data name="AdditionalPaths" xml:space="preserve"><value>… (ещё {0})</value></data>
+  <data name="NotEstimated" xml:space="preserve"><value>Не оценено</value></data>
+  <data name="None" xml:space="preserve"><value>Нет</value></data>
+  <data name="EstimateAvailable" xml:space="preserve"><value>Оценка доступна</value></data>
+  <data name="Estimated" xml:space="preserve"><value>Оценено</value></data>
+  <data name="ConditionalEstimate" xml:space="preserve"><value>Условная оценка</value></data>
+  <data name="RequiresUserDecision" xml:space="preserve"><value>Решение пользователя</value></data>
+  <data name="Accounting" xml:space="preserve"><value>Учёт пространства</value></data>
+  <data name="Reconciliation" xml:space="preserve"><value>Сверка данных</value></data>
+  <data name="Analysis" xml:space="preserve"><value>Анализ</value></data>
+  <data name="ObservedCoverage" xml:space="preserve"><value>Полнота анализа</value></data>
+  <data name="ScanWrongSession" xml:space="preserve"><value>Сканирование вернуло результат для другого сеанса.</value></data>
+  <data name="ScanFailed" xml:space="preserve"><value>Сканирование завершилось ошибкой.</value></data>
+  <data name="LanguagePreferenceSaveFailed" xml:space="preserve"><value>Не удалось сохранить выбранный язык.</value></data>
+  <data name="DesktopScanStateIdle" xml:space="preserve"><value>Ожидание</value></data>
+  <data name="DesktopScanStateScanning" xml:space="preserve"><value>Сканирование</value></data>
+  <data name="DesktopScanStateCancelling" xml:space="preserve"><value>Отмена</value></data>
+  <data name="DesktopScanStateCompleted" xml:space="preserve"><value>Завершено</value></data>
+  <data name="DesktopScanStateCancelled" xml:space="preserve"><value>Отменено</value></data>
+  <data name="DesktopScanStateFailed" xml:space="preserve"><value>Ошибка</value></data>
+  <data name="ProductScanPhaseDiscoveringSystemVolume" xml:space="preserve"><value>Определение системного диска</value></data>
+  <data name="ProductScanPhaseResolvingClassificationContext" xml:space="preserve"><value>Подготовка классификации</value></data>
+  <data name="ProductScanPhaseTraversingAndAccounting" xml:space="preserve"><value>Обход и учёт</value></data>
+  <data name="ProductScanPhaseCompletingAnalysis" xml:space="preserve"><value>Завершение анализа</value></data>
+  <data name="ProductScanPhaseBuildingFindings" xml:space="preserve"><value>Формирование результатов</value></data>
+  <data name="ProductScanPhaseCompleted" xml:space="preserve"><value>Завершено</value></data>
+  <data name="FindingCategoryUnknown" xml:space="preserve"><value>Неизвестное</value></data>
+  <data name="FindingCategorySystem" xml:space="preserve"><value>Система</value></data>
+  <data name="FindingCategoryApplication" xml:space="preserve"><value>Приложения</value></data>
+  <data name="FindingCategoryApplicationData" xml:space="preserve"><value>Данные приложений</value></data>
+  <data name="FindingCategoryUserData" xml:space="preserve"><value>Данные пользователя</value></data>
+  <data name="FindingCategoryTemporary" xml:space="preserve"><value>Временные файлы</value></data>
+  <data name="FindingCategoryCache" xml:space="preserve"><value>Кэш</value></data>
+  <data name="FindingCategoryLogDiagnostic" xml:space="preserve"><value>Журналы и диагностика</value></data>
+  <data name="FindingCategoryInstallerArchive" xml:space="preserve"><value>Установщики и архивы</value></data>
+  <data name="FindingCategoryBackupSnapshot" xml:space="preserve"><value>Резервные копии и снимки</value></data>
+  <data name="FindingCategoryVirtualStorage" xml:space="preserve"><value>Виртуальные диски</value></data>
+  <data name="FindingCategoryCloudBacked" xml:space="preserve"><value>Облачные данные</value></data>
+  <data name="FindingCategoryRecycleBin" xml:space="preserve"><value>Корзина</value></data>
+  <data name="FindingCategoryFilesystemOverhead" xml:space="preserve"><value>Служебные данные файловой системы</value></data>
+  <data name="FindingScopeCategoryAggregate" xml:space="preserve"><value>Сводка по категории</value></data>
+  <data name="FindingScopeHierarchyArea" xml:space="preserve"><value>Область каталогов</value></data>
+  <data name="FindingScopeIdentityGroup" xml:space="preserve"><value>Группа объектов</value></data>
+  <data name="FindingScopeFile" xml:space="preserve"><value>Файл</value></data>
+  <data name="RiskLevelSafe" xml:space="preserve"><value>Безопасно</value></data>
+  <data name="RiskLevelLow" xml:space="preserve"><value>Низкий</value></data>
+  <data name="RiskLevelMedium" xml:space="preserve"><value>Средний</value></data>
+  <data name="RiskLevelHigh" xml:space="preserve"><value>Высокий</value></data>
+  <data name="RiskLevelCritical" xml:space="preserve"><value>Критический</value></data>
+  <data name="ConfidenceUnknown" xml:space="preserve"><value>Неизвестна</value></data>
+  <data name="ConfidenceLow" xml:space="preserve"><value>Низкая</value></data>
+  <data name="ConfidenceMedium" xml:space="preserve"><value>Средняя</value></data>
+  <data name="ConfidenceHigh" xml:space="preserve"><value>Высокая</value></data>
+  <data name="ConfidenceVerified" xml:space="preserve"><value>Подтверждена</value></data>
+  <data name="ProtectionStateBlocked" xml:space="preserve"><value>Заблокировано</value></data>
+  <data name="ProtectionStateNormal" xml:space="preserve"><value>Обычный</value></data>
+  <data name="ProtectionStateReviewRequired" xml:space="preserve"><value>Требует проверки</value></data>
+  <data name="ProtectionStateProtected" xml:space="preserve"><value>Защищено</value></data>
+  <data name="StorageTraversalIssueKindInaccessible" xml:space="preserve"><value>Нет доступа</value></data>
+  <data name="StorageTraversalIssueKindDisappeared" xml:space="preserve"><value>Объект исчез</value></data>
+  <data name="StorageTraversalIssueKindTargetChanged" xml:space="preserve"><value>Цель изменилась</value></data>
+  <data name="StorageTraversalIssueKindIoFailure" xml:space="preserve"><value>Ошибка ввода-вывода</value></data>
+  <data name="StorageTraversalIssueKindIdentityUnavailable" xml:space="preserve"><value>Идентификатор недоступен</value></data>
+  <data name="StorageTraversalIssueKindRecallSensitive" xml:space="preserve"><value>Требуется осторожное чтение</value></data>
+  <data name="AccountingQualityComplete" xml:space="preserve"><value>Полное</value></data>
+  <data name="AccountingQualityIncomplete" xml:space="preserve"><value>Неполное</value></data>
+  <data name="AccountingQualityInconsistent" xml:space="preserve"><value>Несогласованное</value></data>
+  <data name="AccountingQualityUnavailable" xml:space="preserve"><value>Недоступно</value></data>
+  <data name="AnalysisQualityUnavailable" xml:space="preserve"><value>Недоступно</value></data>
+  <data name="AnalysisQualityIncomplete" xml:space="preserve"><value>Неполное</value></data>
+  <data name="AnalysisQualityComplete" xml:space="preserve"><value>Полное</value></data>
+  <data name="ReasonTraversalCoverageGap" xml:space="preserve"><value>Неполный обход</value></data>
+  <data name="ReasonIdentityUnavailable" xml:space="preserve"><value>Идентификатор недоступен</value></data>
+  <data name="ReasonMeasurementUnavailable" xml:space="preserve"><value>Измерение недоступно</value></data>
+  <data name="ReasonConflictingIdentityEvidence" xml:space="preserve"><value>Противоречивые данные идентификации</value></data>
+  <data name="ReasonConflictingPathEvidence" xml:space="preserve"><value>Противоречивые данные пути</value></data>
+  <data name="ReasonUnsupportedAllocationEvidence" xml:space="preserve"><value>Неподдерживаемые данные о размещении</value></data>
+  <data name="ReasonResourceLimit" xml:space="preserve"><value>Ограничение ресурсов</value></data>
+  <data name="ReasonArithmeticOverflow" xml:space="preserve"><value>Арифметическое переполнение</value></data>
+  <data name="ReasonVolumeSnapshotUnavailable" xml:space="preserve"><value>Снимок тома недоступен</value></data>
+  <data name="ReasonVolumeDrift" xml:space="preserve"><value>Изменение состояния тома</value></data>
+  <data name="ReasonUpstreamAccountingUnavailable" xml:space="preserve"><value>Учёт пространства недоступен</value></data>
+  <data name="ReasonUpstreamAccountingIncomplete" xml:space="preserve"><value>Учёт пространства неполон</value></data>
+  <data name="ReasonUpstreamReconciliationInconsistent" xml:space="preserve"><value>Сверка данных несогласованна</value></data>
+  <data name="ReasonClassificationContextIncomplete" xml:space="preserve"><value>Контекст классификации неполон</value></data>
+  <data name="ReasonClassificationRuleConflict" xml:space="preserve"><value>Конфликт правил классификации</value></data>
+  <data name="ReasonCrossCategoryIdentityConflict" xml:space="preserve"><value>Конфликт категорий объекта</value></data>
+  <data name="ReasonAccountingMismatch" xml:space="preserve"><value>Несоответствие учёта</value></data>
+  <data name="ReasonUpstreamAnalysisIncomplete" xml:space="preserve"><value>Анализ неполон</value></data>
+  <data name="ReasonUpstreamAnalysisUnavailable" xml:space="preserve"><value>Анализ недоступен</value></data>
+  <data name="ReasonVolumeCapacityUnavailable" xml:space="preserve"><value>Ёмкость тома недоступна</value></data>
+  <data name="ReasonInputMismatch" xml:space="preserve"><value>Несоответствие входных данных</value></data>
+  <data name="FindingFacetLarge" xml:space="preserve"><value>Крупный</value></data>
+  <data name="FindingFacetOld" xml:space="preserve"><value>Старый</value></data>
+  <data name="FindingFacetRecent" xml:space="preserve"><value>Недавний</value></data>
+  <data name="FindingFacetGrowing" xml:space="preserve"><value>Растущий</value></data>
+  <data name="FindingFacetDuplicateCandidate" xml:space="preserve"><value>Возможный дубликат</value></data>
+  <data name="FindingFacetOrphanCandidate" xml:space="preserve"><value>Возможный остаток</value></data>
+  <data name="FindingFacetCacheLike" xml:space="preserve"><value>Похож на кэш</value></data>
+  <data name="FindingFacetTempLike" xml:space="preserve"><value>Похож на временный</value></data>
+  <data name="FindingFacetUserContent" xml:space="preserve"><value>Пользовательские данные</value></data>
+  <data name="FindingFacetCompressed" xml:space="preserve"><value>Сжатый</value></data>
+  <data name="FindingFacetSparse" xml:space="preserve"><value>Разреженный</value></data>
+  <data name="FindingFacetHardLinked" xml:space="preserve"><value>Жёсткие ссылки</value></data>
+  <data name="FindingFacetCloudPlaceholder" xml:space="preserve"><value>Облачный заполнитель</value></data>
+  <data name="FindingFacetVirtualized" xml:space="preserve"><value>Виртуализирован</value></data>
+  <data name="FindingFacetActive" xml:space="preserve"><value>Активный</value></data>
+  <data name="FindingFacetSystemProtected" xml:space="preserve"><value>Защищён системой</value></data>
+  <data name="FindingFacetUnknownOwner" xml:space="preserve"><value>Владелец неизвестен</value></data>
+</root>
