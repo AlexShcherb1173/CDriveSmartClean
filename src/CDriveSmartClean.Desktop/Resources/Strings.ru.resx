@@ -6,8 +6,8 @@
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
   <data name="AnalysisOnlyBanner" xml:space="preserve"><value>Только анализ — эта версия CDriveSmartClean не удаляет файлы.</value></data>
   <data name="Language" xml:space="preserve"><value>Язык</value></data>
-  <data name="LanguageRestartRequired" xml:space="preserve"><value>Перезапустите CDriveSmartClean, чтобы применить язык.</value></data>
-  <data name="StartScan" xml:space="preserve"><value>Начать сканирование</value></data>
+  <data name="LanguageRestartRequired" xml:space="preserve"><value>Язык сохранён. Перезапустите CDriveSmartClean, чтобы применить его.</value></data>
+  <data name="StartScan" xml:space="preserve"><value>Запустить сканирование</value></data>
   <data name="Cancel" xml:space="preserve"><value>Отмена</value></data>
   <data name="State" xml:space="preserve"><value>Состояние</value></data>
   <data name="ScanProgress" xml:space="preserve"><value>Ход сканирования</value></data>

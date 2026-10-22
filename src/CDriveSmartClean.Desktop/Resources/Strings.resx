@@ -6,7 +6,7 @@
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
   <data name="AnalysisOnlyBanner" xml:space="preserve"><value>Analysis only — CDriveSmartClean does not delete files in this version.</value></data>
   <data name="Language" xml:space="preserve"><value>Language</value></data>
-  <data name="LanguageRestartRequired" xml:space="preserve"><value>Restart CDriveSmartClean to apply the language change.</value></data>
+  <data name="LanguageRestartRequired" xml:space="preserve"><value>Language saved. Restart CDriveSmartClean to apply it.</value></data>
   <data name="StartScan" xml:space="preserve"><value>Start Scan</value></data>
   <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="State" xml:space="preserve"><value>State</value></data>
