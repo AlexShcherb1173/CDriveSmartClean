@@ -1,14 +1,18 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 using CDriveSmartClean.Desktop.Infrastructure;
+using CDriveSmartClean.Desktop.Localization;
 using CDriveSmartClean.Desktop.Presentation;
+using CDriveSmartClean.Desktop.Resources;
 using CDriveSmartClean.Domain.Findings;
 using CDriveSmartClean.Runtime;
 
 namespace CDriveSmartClean.Desktop.ViewModels;
 
 internal enum DesktopScanState { Idle, Scanning, Cancelling, Completed, Cancelled, Failed }
+internal sealed record LanguageOption(string Code, string DisplayName);
 
 internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
@@ -18,6 +22,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly Func<ProductScanRequest, IProgress<ProductScanProgress>?, CancellationToken,
         Task<ProductScanResult>> scanAsync;
     private readonly SynchronizationContext uiContext;
+    private readonly PresentationLocalizer localizer;
+    private readonly Func<string, bool> saveLanguagePreference;
     private readonly AsyncCommand startCommand;
     private readonly DelegateCommand cancelCommand;
     private CancellationTokenSource? activeCancellation;
@@ -29,7 +35,9 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private long rawReportedAllocatedBytesObserved;
     private long traversalIssuesObserved;
     private string errorMessage = string.Empty;
-    private VolumeSummaryRow volumeSummary = VolumeSummaryRow.Empty;
+    private string languageMessage = string.Empty;
+    private string selectedLanguageCode;
+    private VolumeSummaryRow volumeSummary;
     private IReadOnlyList<QualitySummaryRow> qualityRows = Array.Empty<QualitySummaryRow>();
     private IReadOnlyList<CategorySummaryRow> categoryRows = Array.Empty<CategorySummaryRow>();
     private IReadOnlyList<IssueSummaryRow> issueRows = Array.Empty<IssueSummaryRow>();
@@ -39,11 +47,26 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     internal MainWindowViewModel(
         Func<ProductScanRequest, IProgress<ProductScanProgress>?, CancellationToken, Task<ProductScanResult>> scanAsync,
         SynchronizationContext uiContext)
+        : this(scanAsync, uiContext, new PresentationLocalizer(CultureInfo.GetCultureInfo(DesktopCulture.English)),
+            _ => false, DesktopCulture.English)
+    {
+    }
+
+    internal MainWindowViewModel(
+        Func<ProductScanRequest, IProgress<ProductScanProgress>?, CancellationToken, Task<ProductScanResult>> scanAsync,
+        SynchronizationContext uiContext, PresentationLocalizer localizer,
+        Func<string, bool> saveLanguagePreference, string activeLanguageCode)
     {
         ArgumentNullException.ThrowIfNull(scanAsync);
         ArgumentNullException.ThrowIfNull(uiContext);
+        ArgumentNullException.ThrowIfNull(localizer);
+        ArgumentNullException.ThrowIfNull(saveLanguagePreference);
         this.scanAsync = scanAsync;
         this.uiContext = uiContext;
+        this.localizer = localizer;
+        this.saveLanguagePreference = saveLanguagePreference;
+        selectedLanguageCode = DesktopCulture.Normalize(activeLanguageCode) ?? DesktopCulture.English;
+        volumeSummary = VolumeSummaryRow.Empty(localizer);
         startCommand = new AsyncCommand(StartScanAsync, CanStart);
         cancelCommand = new DelegateCommand(CancelScan, CanCancel);
     }
@@ -51,14 +74,25 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public event PropertyChangedEventHandler? PropertyChanged;
     public ICommand StartCommand => startCommand;
     public ICommand CancelCommand => cancelCommand;
+    public IReadOnlyList<LanguageOption> Languages { get; } =
+        Array.AsReadOnly([new LanguageOption(DesktopCulture.English, "English"),
+            new LanguageOption(DesktopCulture.Russian, "Русский")]);
+    public string SelectedLanguageCode
+    {
+        get => selectedLanguageCode;
+        set => ChangeLanguage(value);
+    }
     public DesktopScanState State => state;
-    public string StatusText => state.ToString();
+    public string StatusText => localizer.Localize(state);
     public ProductScanPhase? ProgressPhase => progressPhase;
-    public string ProgressPhaseText => progressPhase?.ToString() ?? "Not started";
+    public string ProgressPhaseText => progressPhase is null
+        ? localizer.Get(nameof(Strings.NotStarted))
+        : localizer.Localize(progressPhase.Value);
     public long ObjectsObserved => objectsObserved;
     public long RawReportedAllocatedBytesObserved => rawReportedAllocatedBytesObserved;
     public long TraversalIssuesObserved => traversalIssuesObserved;
     public string ErrorMessage => errorMessage;
+    public string LanguageMessage => languageMessage;
     public VolumeSummaryRow VolumeSummary => volumeSummary;
     public IReadOnlyList<QualitySummaryRow> QualityRows => qualityRows;
     public IReadOnlyList<CategorySummaryRow> CategoryRows => categoryRows;
@@ -87,7 +121,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             if (!DeactivateSession(sessionId, progress)) return;
             if (result.ScanSessionId != sessionId)
             {
-                SetError("The scan returned a result for a different session.");
+                SetError(localizer.Get(nameof(Strings.ScanWrongSession)));
                 SetState(DesktopScanState.Failed);
                 return;
             }
@@ -100,11 +134,11 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             ClearResult();
             SetState(DesktopScanState.Cancelled);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             if (!DeactivateSession(sessionId, progress)) return;
             ClearResult();
-            SetError(string.IsNullOrWhiteSpace(exception.Message) ? "The scan failed." : exception.Message);
+            SetError(localizer.Get(nameof(Strings.ScanFailed)));
             SetState(DesktopScanState.Failed);
         }
         finally
@@ -163,27 +197,33 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private void PublishResult(ProductScanResult result)
     {
+        string unavailable = localizer.Get(nameof(Strings.Unavailable));
         volumeSummary = new(result.SystemVolume.RootPath,
-            PresentationFormatter.FormatBytes(result.EndSnapshot.CapacityBytes),
-            PresentationFormatter.FormatBytes(result.EndSnapshot.UsedBytes),
-            PresentationFormatter.FormatBytes(result.EndSnapshot.FreeBytes));
+            PresentationFormatter.FormatBytes(result.EndSnapshot.CapacityBytes, unavailable),
+            PresentationFormatter.FormatBytes(result.EndSnapshot.UsedBytes, unavailable),
+            PresentationFormatter.FormatBytes(result.EndSnapshot.FreeBytes, unavailable));
         qualityRows = Array.AsReadOnly(new[]
         {
-            new QualitySummaryRow("Accounting", result.AccountingQuality.ToString(), result.AccountingReason.ToString()),
-            new QualitySummaryRow("Reconciliation", result.ReconciliationQuality.ToString(), result.ReconciliationReasons.ToString()),
-            new QualitySummaryRow("Analysis", result.AnalysisQuality.ToString(), result.AnalysisReason.ToString()),
-            new QualitySummaryRow("Findings", result.FindingQuality.ToString(), result.UniversalFindingReason.ToString()),
-            new QualitySummaryRow("Observed coverage", PresentationFormatter.FormatPercentage(result.ObservedCoveragePercent), string.Empty),
+            new QualitySummaryRow(localizer.Get(nameof(Strings.Accounting)), localizer.Localize(result.AccountingQuality),
+                localizer.Localize(result.AccountingReason)),
+            new QualitySummaryRow(localizer.Get(nameof(Strings.Reconciliation)), localizer.Localize(result.ReconciliationQuality),
+                localizer.Localize(result.ReconciliationReasons)),
+            new QualitySummaryRow(localizer.Get(nameof(Strings.Analysis)), localizer.Localize(result.AnalysisQuality),
+                localizer.Localize(result.AnalysisReason)),
+            new QualitySummaryRow(localizer.Get(nameof(Strings.Findings)), localizer.Localize(result.FindingQuality),
+                localizer.Localize(result.UniversalFindingReason)),
+            new QualitySummaryRow(localizer.Get(nameof(Strings.ObservedCoverage)),
+                PresentationFormatter.FormatPercentage(result.ObservedCoveragePercent, unavailable), string.Empty),
         });
         categoryRows = Array.AsReadOnly(result.Findings
             .Where(finding => finding.Scope == FindingScope.CategoryAggregate &&
                               SupportedCategories.Contains(finding.PrimaryCategory))
             .OrderBy(finding => Array.IndexOf(SupportedCategories, finding.PrimaryCategory))
-            .Select(finding => new CategorySummaryRow(finding.PrimaryCategory,
-                PresentationFormatter.FormatBytes(finding.SizeMetrics.AllocatedBytes))).ToArray());
+            .Select(finding => new CategorySummaryRow(localizer.Localize(finding.PrimaryCategory),
+                PresentationFormatter.FormatBytes(finding.SizeMetrics.AllocatedBytes, unavailable))).ToArray());
         issueRows = Array.AsReadOnly(result.IssueCounts.Where(item => item.Value > 0).OrderBy(item => item.Key)
-            .Select(item => new IssueSummaryRow(item.Key, item.Value)).ToArray());
-        findingRows = Array.AsReadOnly(result.Findings.Select(FindingRow.FromFinding).ToArray());
+            .Select(item => new IssueSummaryRow(localizer.Localize(item.Key), item.Value)).ToArray());
+        findingRows = Array.AsReadOnly(result.Findings.Select(finding => FindingRow.FromFinding(finding, localizer)).ToArray());
         OnPropertyChanged(nameof(VolumeSummary));
         OnPropertyChanged(nameof(QualityRows));
         OnPropertyChanged(nameof(CategoryRows));
@@ -209,7 +249,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private void ClearResult()
     {
-        volumeSummary = VolumeSummaryRow.Empty;
+        volumeSummary = VolumeSummaryRow.Empty(localizer);
         qualityRows = Array.Empty<QualitySummaryRow>();
         categoryRows = Array.Empty<CategorySummaryRow>();
         issueRows = Array.Empty<IssueSummaryRow>();
@@ -222,6 +262,33 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     }
 
     private void SetError(string message) { errorMessage = message; OnPropertyChanged(nameof(ErrorMessage)); }
+    private void ChangeLanguage(string? requestedCulture)
+    {
+        string? normalized = DesktopCulture.Normalize(requestedCulture);
+        if (normalized is null)
+        {
+            uiContext.Post(_ => OnPropertyChanged(nameof(SelectedLanguageCode)), null);
+            return;
+        }
+        if (normalized == selectedLanguageCode) return;
+
+        if (saveLanguagePreference(normalized))
+        {
+            selectedLanguageCode = normalized;
+            OnPropertyChanged(nameof(SelectedLanguageCode));
+            SetLanguageMessage(localizer.Get(nameof(Strings.LanguageRestartRequired)));
+            return;
+        }
+
+        uiContext.Post(_ => OnPropertyChanged(nameof(SelectedLanguageCode)), null);
+        SetLanguageMessage(localizer.Get(nameof(Strings.LanguagePreferenceSaveFailed)));
+    }
+
+    private void SetLanguageMessage(string message)
+    {
+        languageMessage = message;
+        OnPropertyChanged(nameof(LanguageMessage));
+    }
     private void SetState(DesktopScanState value)
     {
         if (state == value) return;

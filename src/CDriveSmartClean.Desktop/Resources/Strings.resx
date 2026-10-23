@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="AnalysisOnlyBanner" xml:space="preserve"><value>Analysis only — CDriveSmartClean does not delete files in this version.</value></data>
+  <data name="Language" xml:space="preserve"><value>Language</value></data>
+  <data name="LanguageRestartRequired" xml:space="preserve"><value>Language saved. Restart CDriveSmartClean to apply it.</value></data>
+  <data name="StartScan" xml:space="preserve"><value>Start Scan</value></data>
+  <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="State" xml:space="preserve"><value>State</value></data>
+  <data name="ScanProgress" xml:space="preserve"><value>Scan progress</value></data>
+  <data name="Phase" xml:space="preserve"><value>Phase</value></data>
+  <data name="ObjectsObserved" xml:space="preserve"><value>Objects observed</value></data>
+  <data name="RawReportedAllocatedBytes" xml:space="preserve"><value>Raw reported allocated bytes</value></data>
+  <data name="TraversalIssuesObserved" xml:space="preserve"><value>Traversal issues observed</value></data>
+  <data name="Overview" xml:space="preserve"><value>Overview</value></data>
+  <data name="Findings" xml:space="preserve"><value>Findings</value></data>
+  <data name="SystemVolume" xml:space="preserve"><value>System volume</value></data>
+  <data name="Root" xml:space="preserve"><value>Root</value></data>
+  <data name="Capacity" xml:space="preserve"><value>Capacity</value></data>
+  <data name="Used" xml:space="preserve"><value>Used</value></data>
+  <data name="Free" xml:space="preserve"><value>Free</value></data>
+  <data name="QualityAndCoverage" xml:space="preserve"><value>Quality and coverage</value></data>
+  <data name="CategoryAllocation" xml:space="preserve"><value>Category allocation</value></data>
+  <data name="TraversalIssues" xml:space="preserve"><value>Traversal issues</value></data>
+  <data name="Name" xml:space="preserve"><value>Name</value></data>
+  <data name="Category" xml:space="preserve"><value>Category</value></data>
+  <data name="Scope" xml:space="preserve"><value>Scope</value></data>
+  <data name="Allocated" xml:space="preserve"><value>Allocated</value></data>
+  <data name="Logical" xml:space="preserve"><value>Logical</value></data>
+  <data name="Reclaim" xml:space="preserve"><value>Reclaim</value></data>
+  <data name="Risk" xml:space="preserve"><value>Risk</value></data>
+  <data name="RiskConfidence" xml:space="preserve"><value>Risk confidence</value></data>
+  <data name="FindingConfidence" xml:space="preserve"><value>Finding confidence</value></data>
+  <data name="Protection" xml:space="preserve"><value>Protection</value></data>
+  <data name="Facets" xml:space="preserve"><value>Facets</value></data>
+  <data name="Path" xml:space="preserve"><value>Path</value></data>
+  <data name="NotStarted" xml:space="preserve"><value>Not started</value></data>
+  <data name="NotScanned" xml:space="preserve"><value>Not scanned</value></data>
+  <data name="Unavailable" xml:space="preserve"><value>Unavailable</value></data>
+  <data name="AdditionalPaths" xml:space="preserve"><value>… (+{0} more)</value></data>
+  <data name="NotEstimated" xml:space="preserve"><value>Not estimated</value></data>
+  <data name="None" xml:space="preserve"><value>None</value></data>
+  <data name="EstimateAvailable" xml:space="preserve"><value>Estimate available</value></data>
+  <data name="Estimated" xml:space="preserve"><value>Estimated</value></data>
+  <data name="ConditionalEstimate" xml:space="preserve"><value>Conditional estimate</value></data>
+  <data name="RequiresUserDecision" xml:space="preserve"><value>Requires user decision</value></data>
+  <data name="Accounting" xml:space="preserve"><value>Accounting</value></data>
+  <data name="Reconciliation" xml:space="preserve"><value>Reconciliation</value></data>
+  <data name="Analysis" xml:space="preserve"><value>Analysis</value></data>
+  <data name="ObservedCoverage" xml:space="preserve"><value>Observed coverage</value></data>
+  <data name="ScanWrongSession" xml:space="preserve"><value>The scan returned a result for a different session.</value></data>
+  <data name="ScanFailed" xml:space="preserve"><value>The scan failed.</value></data>
+  <data name="LanguagePreferenceSaveFailed" xml:space="preserve"><value>The language preference could not be saved.</value></data>
+  <data name="DesktopScanStateIdle" xml:space="preserve"><value>Idle</value></data>
+  <data name="DesktopScanStateScanning" xml:space="preserve"><value>Scanning</value></data>
+  <data name="DesktopScanStateCancelling" xml:space="preserve"><value>Cancelling</value></data>
+  <data name="DesktopScanStateCompleted" xml:space="preserve"><value>Completed</value></data>
+  <data name="DesktopScanStateCancelled" xml:space="preserve"><value>Cancelled</value></data>
+  <data name="DesktopScanStateFailed" xml:space="preserve"><value>Failed</value></data>
+  <data name="ProductScanPhaseDiscoveringSystemVolume" xml:space="preserve"><value>Discovering system volume</value></data>
+  <data name="ProductScanPhaseResolvingClassificationContext" xml:space="preserve"><value>Resolving classification context</value></data>
+  <data name="ProductScanPhaseTraversingAndAccounting" xml:space="preserve"><value>Traversing and accounting</value></data>
+  <data name="ProductScanPhaseCompletingAnalysis" xml:space="preserve"><value>Completing analysis</value></data>
+  <data name="ProductScanPhaseBuildingFindings" xml:space="preserve"><value>Building findings</value></data>
+  <data name="ProductScanPhaseCompleted" xml:space="preserve"><value>Completed</value></data>
+  <data name="FindingCategoryUnknown" xml:space="preserve"><value>Unknown</value></data>
+  <data name="FindingCategorySystem" xml:space="preserve"><value>System</value></data>
+  <data name="FindingCategoryApplication" xml:space="preserve"><value>Application</value></data>
+  <data name="FindingCategoryApplicationData" xml:space="preserve"><value>Application data</value></data>
+  <data name="FindingCategoryUserData" xml:space="preserve"><value>User data</value></data>
+  <data name="FindingCategoryTemporary" xml:space="preserve"><value>Temporary</value></data>
+  <data name="FindingCategoryCache" xml:space="preserve"><value>Cache</value></data>
+  <data name="FindingCategoryLogDiagnostic" xml:space="preserve"><value>Logs and diagnostics</value></data>
+  <data name="FindingCategoryInstallerArchive" xml:space="preserve"><value>Installers and archives</value></data>
+  <data name="FindingCategoryBackupSnapshot" xml:space="preserve"><value>Backups and snapshots</value></data>
+  <data name="FindingCategoryVirtualStorage" xml:space="preserve"><value>Virtual storage</value></data>
+  <data name="FindingCategoryCloudBacked" xml:space="preserve"><value>Cloud-backed</value></data>
+  <data name="FindingCategoryRecycleBin" xml:space="preserve"><value>Recycle Bin</value></data>
+  <data name="FindingCategoryFilesystemOverhead" xml:space="preserve"><value>Filesystem overhead</value></data>
+  <data name="FindingScopeCategoryAggregate" xml:space="preserve"><value>Category aggregate</value></data>
+  <data name="FindingScopeHierarchyArea" xml:space="preserve"><value>Hierarchy area</value></data>
+  <data name="FindingScopeIdentityGroup" xml:space="preserve"><value>Identity group</value></data>
+  <data name="FindingScopeFile" xml:space="preserve"><value>File</value></data>
+  <data name="RiskLevelSafe" xml:space="preserve"><value>Safe</value></data>
+  <data name="RiskLevelLow" xml:space="preserve"><value>Low</value></data>
+  <data name="RiskLevelMedium" xml:space="preserve"><value>Medium</value></data>
+  <data name="RiskLevelHigh" xml:space="preserve"><value>High</value></data>
+  <data name="RiskLevelCritical" xml:space="preserve"><value>Critical</value></data>
+  <data name="ConfidenceUnknown" xml:space="preserve"><value>Unknown</value></data>
+  <data name="ConfidenceLow" xml:space="preserve"><value>Low</value></data>
+  <data name="ConfidenceMedium" xml:space="preserve"><value>Medium</value></data>
+  <data name="ConfidenceHigh" xml:space="preserve"><value>High</value></data>
+  <data name="ConfidenceVerified" xml:space="preserve"><value>Verified</value></data>
+  <data name="ProtectionStateBlocked" xml:space="preserve"><value>Blocked</value></data>
+  <data name="ProtectionStateNormal" xml:space="preserve"><value>Normal</value></data>
+  <data name="ProtectionStateReviewRequired" xml:space="preserve"><value>Review required</value></data>
+  <data name="ProtectionStateProtected" xml:space="preserve"><value>Protected</value></data>
+  <data name="StorageTraversalIssueKindInaccessible" xml:space="preserve"><value>Inaccessible</value></data>
+  <data name="StorageTraversalIssueKindDisappeared" xml:space="preserve"><value>Disappeared</value></data>
+  <data name="StorageTraversalIssueKindTargetChanged" xml:space="preserve"><value>Target changed</value></data>
+  <data name="StorageTraversalIssueKindIoFailure" xml:space="preserve"><value>I/O failure</value></data>
+  <data name="StorageTraversalIssueKindIdentityUnavailable" xml:space="preserve"><value>Identity unavailable</value></data>
+  <data name="StorageTraversalIssueKindRecallSensitive" xml:space="preserve"><value>Recall-sensitive</value></data>
+  <data name="AccountingQualityComplete" xml:space="preserve"><value>Complete</value></data>
+  <data name="AccountingQualityIncomplete" xml:space="preserve"><value>Incomplete</value></data>
+  <data name="AccountingQualityInconsistent" xml:space="preserve"><value>Inconsistent</value></data>
+  <data name="AccountingQualityUnavailable" xml:space="preserve"><value>Unavailable</value></data>
+  <data name="AnalysisQualityUnavailable" xml:space="preserve"><value>Unavailable</value></data>
+  <data name="AnalysisQualityIncomplete" xml:space="preserve"><value>Incomplete</value></data>
+  <data name="AnalysisQualityComplete" xml:space="preserve"><value>Complete</value></data>
+  <data name="ReasonTraversalCoverageGap" xml:space="preserve"><value>Traversal coverage gap</value></data>
+  <data name="ReasonIdentityUnavailable" xml:space="preserve"><value>Identity unavailable</value></data>
+  <data name="ReasonMeasurementUnavailable" xml:space="preserve"><value>Measurement unavailable</value></data>
+  <data name="ReasonConflictingIdentityEvidence" xml:space="preserve"><value>Conflicting identity evidence</value></data>
+  <data name="ReasonConflictingPathEvidence" xml:space="preserve"><value>Conflicting path evidence</value></data>
+  <data name="ReasonUnsupportedAllocationEvidence" xml:space="preserve"><value>Unsupported allocation evidence</value></data>
+  <data name="ReasonResourceLimit" xml:space="preserve"><value>Resource limit</value></data>
+  <data name="ReasonArithmeticOverflow" xml:space="preserve"><value>Arithmetic overflow</value></data>
+  <data name="ReasonVolumeSnapshotUnavailable" xml:space="preserve"><value>Volume snapshot unavailable</value></data>
+  <data name="ReasonVolumeDrift" xml:space="preserve"><value>Volume drift</value></data>
+  <data name="ReasonUpstreamAccountingUnavailable" xml:space="preserve"><value>Upstream accounting unavailable</value></data>
+  <data name="ReasonUpstreamAccountingIncomplete" xml:space="preserve"><value>Upstream accounting incomplete</value></data>
+  <data name="ReasonUpstreamReconciliationInconsistent" xml:space="preserve"><value>Upstream reconciliation inconsistent</value></data>
+  <data name="ReasonClassificationContextIncomplete" xml:space="preserve"><value>Classification context incomplete</value></data>
+  <data name="ReasonClassificationRuleConflict" xml:space="preserve"><value>Classification rule conflict</value></data>
+  <data name="ReasonCrossCategoryIdentityConflict" xml:space="preserve"><value>Cross-category identity conflict</value></data>
+  <data name="ReasonAccountingMismatch" xml:space="preserve"><value>Accounting mismatch</value></data>
+  <data name="ReasonUpstreamAnalysisIncomplete" xml:space="preserve"><value>Upstream analysis incomplete</value></data>
+  <data name="ReasonUpstreamAnalysisUnavailable" xml:space="preserve"><value>Upstream analysis unavailable</value></data>
+  <data name="ReasonVolumeCapacityUnavailable" xml:space="preserve"><value>Volume capacity unavailable</value></data>
+  <data name="ReasonInputMismatch" xml:space="preserve"><value>Input mismatch</value></data>
+  <data name="FindingFacetLarge" xml:space="preserve"><value>Large</value></data>
+  <data name="FindingFacetOld" xml:space="preserve"><value>Old</value></data>
+  <data name="FindingFacetRecent" xml:space="preserve"><value>Recent</value></data>
+  <data name="FindingFacetGrowing" xml:space="preserve"><value>Growing</value></data>
+  <data name="FindingFacetDuplicateCandidate" xml:space="preserve"><value>Duplicate candidate</value></data>
+  <data name="FindingFacetOrphanCandidate" xml:space="preserve"><value>Orphan candidate</value></data>
+  <data name="FindingFacetCacheLike" xml:space="preserve"><value>Cache-like</value></data>
+  <data name="FindingFacetTempLike" xml:space="preserve"><value>Temporary-like</value></data>
+  <data name="FindingFacetUserContent" xml:space="preserve"><value>User content</value></data>
+  <data name="FindingFacetCompressed" xml:space="preserve"><value>Compressed</value></data>
+  <data name="FindingFacetSparse" xml:space="preserve"><value>Sparse</value></data>
+  <data name="FindingFacetHardLinked" xml:space="preserve"><value>Hard-linked</value></data>
+  <data name="FindingFacetCloudPlaceholder" xml:space="preserve"><value>Cloud placeholder</value></data>
+  <data name="FindingFacetVirtualized" xml:space="preserve"><value>Virtualized</value></data>
+  <data name="FindingFacetActive" xml:space="preserve"><value>Active</value></data>
+  <data name="FindingFacetSystemProtected" xml:space="preserve"><value>System-protected</value></data>
+  <data name="FindingFacetUnknownOwner" xml:space="preserve"><value>Unknown owner</value></data>
+</root>

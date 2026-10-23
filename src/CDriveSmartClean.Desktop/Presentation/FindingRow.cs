@@ -1,21 +1,23 @@
-using CDriveSmartClean.Domain;
 using CDriveSmartClean.Domain.Findings;
-using CDriveSmartClean.Domain.Risk;
 
 namespace CDriveSmartClean.Desktop.Presentation;
 
-internal sealed record FindingRow(string DisplayName, FindingCategory Category, FindingScope Scope,
-    string Allocated, string Logical, string Reclaim, RiskLevel Risk, Confidence RiskConfidence,
-    Confidence Confidence, ProtectionState ProtectionState, string Facets, string RelativePathSummary)
+internal sealed record FindingRow(string DisplayName, string Category, string Scope,
+    string Allocated, string Logical, string Reclaim, string Risk, string RiskConfidence,
+    string Confidence, string ProtectionState, string Facets, string RelativePathSummary)
 {
-    internal static FindingRow FromFinding(Finding finding)
+    internal static FindingRow FromFinding(Finding finding, PresentationLocalizer localizer)
     {
         ArgumentNullException.ThrowIfNull(finding);
-        return new(finding.DisplayName, finding.PrimaryCategory, finding.Scope,
-            PresentationFormatter.FormatBytes(finding.SizeMetrics.AllocatedBytes),
-            PresentationFormatter.FormatBytes(finding.SizeMetrics.LogicalBytes),
-            PresentationFormatter.FormatReclaim(finding.ReclaimEstimate), finding.RiskAssessment.Level,
-            finding.RiskAssessment.Confidence, finding.Confidence, finding.ProtectionState,
-            string.Join(", ", finding.Facets), PresentationFormatter.FormatPathSummary(finding.RelativePaths));
+        ArgumentNullException.ThrowIfNull(localizer);
+        string unavailable = localizer.Get(nameof(Resources.Strings.Unavailable));
+        return new(localizer.LocalizeFindingDisplayName(finding.Scope, finding.PrimaryCategory, finding.DisplayName),
+            localizer.Localize(finding.PrimaryCategory), localizer.Localize(finding.Scope),
+            PresentationFormatter.FormatBytes(finding.SizeMetrics.AllocatedBytes, unavailable),
+            PresentationFormatter.FormatBytes(finding.SizeMetrics.LogicalBytes, unavailable),
+            localizer.Localize(finding.ReclaimEstimate), localizer.Localize(finding.RiskAssessment.Level),
+            localizer.Localize(finding.RiskAssessment.Confidence), localizer.Localize(finding.Confidence),
+            localizer.Localize(finding.ProtectionState), localizer.LocalizeFacets(finding.Facets),
+            PresentationFormatter.FormatPathSummary(finding.RelativePaths, localizer.FormatAdditionalPaths));
     }
 }
